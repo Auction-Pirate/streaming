@@ -41,9 +41,12 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	// Set up HTTP routes
+	// Set up WebRTC routes
 	http.HandleFunc("/broadcast", handleBroadcaster)
 	http.HandleFunc("/view", handleViewer)
+
+	// Set up web routes
+	setupWebRoutes()
 
 	port := os.Getenv("WEBRTC_PORT")
 	if port == "" {
@@ -257,4 +260,16 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 func generateViewerID() string {
 	// Simple implementation - you might want to use UUID in production
 	return "viewer-" + string(os.Getpid())
+}
+
+func getStreamKey() string {
+	return os.Getenv("STREAM_KEY")
+}
+
+func getServerURL() string {
+	port := os.Getenv("WEBRTC_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	return "ws://" + os.Getenv("SERVER_HOST") + ":" + port
 } 

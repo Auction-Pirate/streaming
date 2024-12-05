@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>{{if .IsBroadcaster}}Broadcast{{else}}View{{end}} Stream</title>
+		<style>
+			body {
+				margin: 0;
+				padding: 20px;
+				font-family: Arial, sans-serif;
+				background: #f0f0f0;
+			}
+			.container {
+				max-width: 1200px;
+				margin: 0 auto;
+			}
+			.video-container {
+				position: relative;
+				background: #000;
+				border-radius: 8px;
+				overflow: hidden;
+				margin-bottom: 20px;
+			}
+			video {
+				width: 100%;
+				max-height: 80vh;
+				background: #000;
+			}
+			.controls {
+				padding: 15px;
+				background: #fff;
+				border-radius: 8px;
+				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+			}
+			button {
+				padding: 10px 20px;
+				font-size: 16px;
+				border: none;
+				border-radius: 4px;
+				background: #2196f3;
+				color: white;
+				cursor: pointer;
+				margin-right: 10px;
+			}
+			button:hover {
+				background: #1976d2;
+			}
+			button:disabled {
+				background: #ccc;
+				cursor: not-allowed;
+			}
+			.status {
+				display: inline-block;
+				padding: 8px 12px;
+				border-radius: 4px;
+				margin-left: 10px;
+			}
+			.stream-key {
+				margin-bottom: 20px;
+				padding: 15px;
+				background: #fff;
+				border-radius: 8px;
+				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+			}
+			.error {
+				color: #f44336;
+				margin-top: 10px;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			{{if .IsBroadcaster}}
+			<div class="stream-key">
+				<h3>Stream Key</h3>
+				<p>Your stream key: <strong>{{.StreamKey}}</strong></p>
+			</div>
+			{{end}}
+
+			<div class="video-container">
+				<video
+					id="video"
+					playsinline
+					{{if
+					not
+					.IsBroadcaster}}autoplay{{end}}
+				></video>
+			</div>
+
+			<div class="controls">
+				{{if .IsBroadcaster}}
+				<button id="startButton">Start Broadcasting</button>
+				<button id="stopButton" disabled>Stop Broadcasting</button>
+				{{end}}
+				<span id="status" class="status">Disconnected</span>
+			</div>
+		</div>
+
+		<script>
+			const config = {
+			    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+			};
+
+			let pc = null;
+			let ws = null;
+			let stream = null;
+
+			const videoElement = document.getElementById('video');
+			const statusElement = document.getElementById('status');
+			{{if .IsBroadcaster}}
+			const startButton = document.getElementById('startButton');
+			const stopButton = document.getElementById('stopButton');
+			{{end}}
+
+			function updateStatus(status, color = '#000') {
+			    statusElement.textContent = status;
+			    statusElement.style.color = color;
+			}
+
+			{{if .IsBroadcaster}}
+			async function startBroadcast() {
+			    try {
+			        stream = await navigator.mediaDevices.getUserMedia({
+			            video: true,
+			            audio: true
+			        });
+			        videoElement.srcObject = stream;
+			        videoElement.play();
+
+			        pc = new RTCPeerConnection(config);
+			        ws = new WebSocket('{{.ServerWSURL}}/broadcast');
+
+			        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+			        pc.oniceconnectionstatechange = () => {
+			            updateStatus(`ICE Connection: ${pc.iceConnectionState}`);
+			        };
+
+			        ws.onopen = async () => {
+			            const offer = await pc.createOffer();
+			            await pc.setLocalDescription(offer);
+
+			            ws.send(JSON.stringify({
+			                type: 'offer',
+			                data: offer.sdp,
+			                streamKey: '{{.StreamKey}}'
+			            }));
+			        };
+
+			        ws.onmessage = async (e) => {
+			            const msg = JSON.parse(e.data);
+			            if (msg.type === 'answer') {
+			                await pc.setRemoteDescription(new RTCSessionDescription({
+			                    type: 'answer',
+			                    sdp: msg.data
+			                }));
+			            }
+			        };
+
+			        startButton.disabled = true;
+			        stopButton.disabled = false;
+			        updateStatus('Broadcasting', '#4CAF50');
+			    } catch (err) {
+			        console.error(err);
+			        updateStatus('Error: ' + err.message, '#f44336');
+			    }
+			}
+
+			function stopBroadcast() {
+			    if (stream) {
+			        stream.getTracks().forEach(track => track.stop());
+			    }
+			    if (pc) {
+			        pc.close();
+			    }
+			    if (ws) {
+			        ws.close();
+			    }
+			    videoElement.srcObject = null;
+			    startButton.disabled = false;
+			    stopButton.disabled = true;
+			    updateStatus('Disconnected');
+			}
+
+			startButton.onclick = startBroadcast;
+			stopButton.onclick = stopBroadcast;
+			{{else}}
+			async function startViewing() {
+			    try {
+			        pc = new RTCPeerConnection(config);
+			        ws = new WebSocket('{{.ServerWSURL}}/view');
+
+			        pc.ontrack = (event) => {
+			            videoElement.srcObject = event.streams[0];
+			        };
+
+			        pc.oniceconnectionstatechange = () => {
+			            updateStatus(`ICE Connection: ${pc.iceConnectionState}`);
+			        };
+
+			        ws.onopen = async () => {
+			            const offer = await pc.createOffer();
+			            await pc.setLocalDescription(offer);
+
+			            ws.send(JSON.stringify({
+			                type: 'offer',
+			                data: offer.sdp
+			            }));
+			        };
+
+			        ws.onmessage = async (e) => {
+			            const msg = JSON.parse(e.data);
+			            if (msg.type === 'answer') {
+			                await pc.setRemoteDescription(new RTCSessionDescription({
+			                    type: 'answer',
+			                    sdp: msg.data
+			                }));
+			            }
+			        };
+
+			        updateStatus('Connected', '#4CAF50');
+			    } catch (err) {
+			        console.error(err);
+			        updateStatus('Error: ' + err.message, '#f44336');
+			    }
+			}
+
+			startViewing();
+			{{end}}
+		</script>
+	</body>
+</html>
