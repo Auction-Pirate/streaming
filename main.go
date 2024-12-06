@@ -12,21 +12,31 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
+// WebRTC and WebSocket configurations
 var (
 	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
+		CheckOrigin:      func(r *http.Request) bool { return true },
+		ReadBufferSize:   1024,
+		WriteBufferSize:  1024,
 	}
 
-	// Global state
-	broadcaster     *WebRTCConnection
-	viewers         = make(map[string]*WebRTCConnection)
-	viewersMutex    sync.RWMutex
+	webrtcConfig = webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	}
 )
 
+// Global state management
+var (
+	broadcaster   *WebRTCConnection
+	viewers       = make(map[string]*WebRTCConnection)
+	viewersMutex  sync.RWMutex
+)
+
+// Types
 type WebRTCConnection struct {
 	PeerConnection *webrtc.PeerConnection
 	WebSocket      *websocket.Conn
@@ -39,293 +49,131 @@ type Message struct {
 	StreamKey string `json:"streamKey,omitempty"`
 }
 
-func main() {
+// Server configuration
+type ServerConfig struct {
+	Port       string
+	Host       string
+	StunServer string
+	StreamKey  string
+}
+
+func loadConfig() (*ServerConfig, error) {
 	if err := godotenv.Load(); err != nil {
 		log.Printf("Warning: .env file not found")
 	}
 
-	// CORS middleware
-	corsMiddleware := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Set CORS headers
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
+	return &ServerConfig{
+		Port:       getEnvOrDefault("WEBRTC_PORT", "8080"),
+		Host:       getEnvOrDefault("SERVER_HOST", "localhost"),
+		StunServer: getEnvOrDefault("STUN_SERVER", "stun:stun.l.google.com:19302"),
+		StreamKey:  getEnvOrDefault("STREAM_KEY", "your-secret-stream-key"),
+	}, nil
+}
 
-			// Handle preflight requests
-			if r.Method == "OPTIONS" {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
 	}
+	return defaultValue
+}
 
-	// Create router
-	mux := http.NewServeMux()
+// Middleware
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	// Serve static files
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Route handlers
+func setupRoutes(mux *http.ServeMux) {
+	// Static files
 	fs := http.FileServer(http.Dir("static"))
 	mux.Handle("/static/", http.StripPrefix("/static/", fs))
 
 	// WebSocket endpoints
-	mux.HandleFunc("/broadcast", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Received broadcast connection request from %s", r.RemoteAddr)
-		handleBroadcaster(w, r)
-	})
-
-	mux.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Received view connection request from %s", r.RemoteAddr)
-		handleViewer(w, r)
-	})
+	mux.HandleFunc("/broadcast", logRequest(handleBroadcaster))
+	mux.HandleFunc("/view", logRequest(handleViewer))
 
 	// Web routes
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		view := r.URL.Query().Get("view")
-		
-		switch view {
-		case "broadcaster":
-			http.ServeFile(w, r, "static/broadcaster.html")
-		case "viewer":
-			http.ServeFile(w, r, "static/viewer.html")
-		default:
-			// Redirect to viewer by default
-			http.Redirect(w, r, "/?view=viewer", http.StatusFound)
-		}
+	mux.HandleFunc("/", handleRoot)
+	mux.HandleFunc("/broadcast-status", handleBroadcastStatus)
+}
+
+func logRequest(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		handler(w, r)
+	}
+}
+
+func handleRoot(w http.ResponseWriter, r *http.Request) {
+	view := r.URL.Query().Get("view")
+	
+	switch view {
+	case "broadcaster":
+		http.ServeFile(w, r, "static/broadcaster.html")
+	case "viewer":
+		http.ServeFile(w, r, "static/viewer.html")
+	default:
+		http.Redirect(w, r, "/?view=viewer", http.StatusFound)
+	}
+}
+
+func handleBroadcastStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"broadcasting": broadcaster != nil,
 	})
+}
 
-	// Add this to your route handlers
-	mux.HandleFunc("/broadcast-status", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"broadcasting": broadcaster != nil,
-		})
-	})
-
-	// Wrap with CORS middleware
-	handler := corsMiddleware(mux)
-
-	// Get port from environment
-	port := os.Getenv("WEBRTC_PORT")
-	if port == "" {
-		port = "8080"
+// Main function
+func main() {
+	config, err := loadConfig()
+	if err != nil {
+		log.Fatal("Failed to load configuration:", err)
 	}
 
-	// Add debug logging
-	log.Printf("Starting server with configuration:")
-	log.Printf("Port: %s", port)
-	log.Printf("Host: %s", os.Getenv("SERVER_HOST"))
-	log.Printf("STUN Server: %s", os.Getenv("STUN_SERVER"))
+	// Create router and setup routes
+	mux := http.NewServeMux()
+	setupRoutes(mux)
 
+	// Wrap with middleware
+	handler := corsMiddleware(mux)
+
+	// Configure server
 	server := &http.Server{
-		Addr:    "0.0.0.0:" + port,
+		Addr:    "0.0.0.0:" + config.Port,
 		Handler: handler,
 	}
 
-	log.Printf("Server listening on port %s", port)
+	// Log configuration
+	log.Printf("Starting server with configuration:")
+	log.Printf("Port: %s", config.Port)
+	log.Printf("Host: %s", config.Host)
+	log.Printf("STUN Server: %s", config.StunServer)
+
+	// Start server
+	log.Printf("Server listening on port %s", config.Port)
 	log.Fatal(server.ListenAndServe())
 }
 
+// Helper functions
 func createPeerConnection() (*webrtc.PeerConnection, error) {
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{"stun:stun.l.google.com:19302"},
-			},
-		},
-	}
-	return webrtc.NewPeerConnection(config)
-}
-
-// Add the handler functions here
-func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Received broadcast connection request from %s", r.RemoteAddr)
-	
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
-		return
-	}
-	defer conn.Close()
-
-	log.Printf("WebSocket connection established with broadcaster")
-
-	pc, err := createPeerConnection()
-	if err != nil {
-		log.Printf("Failed to create peer connection: %v", err)
-		return
-	}
-	defer pc.Close()
-
-	// Create new broadcaster connection
-	b := &WebRTCConnection{
-		PeerConnection: pc,
-		WebSocket:      conn,
-	}
-
-	// Set broadcaster
-	broadcaster = b
-
-	// Handle incoming messages
-	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			log.Printf("WebSocket read error: %v", err)
-			break
-		}
-
-		var message Message
-		if err := json.Unmarshal(msg, &message); err != nil {
-			log.Printf("Failed to parse message: %v", err)
-			continue
-		}
-
-		log.Printf("Received message type: %s", message.Type)
-
-		switch message.Type {
-		case "offer":
-			// Handle the offer
-			err = pc.SetRemoteDescription(webrtc.SessionDescription{
-				Type: webrtc.SDPTypeOffer,
-				SDP:  message.SDP,
-			})
-			if err != nil {
-				log.Printf("Failed to set remote description: %v", err)
-				continue
-			}
-
-			// Create answer
-			answer, err := pc.CreateAnswer(nil)
-			if err != nil {
-				log.Printf("Failed to create answer: %v", err)
-				continue
-			}
-
-			// Set local description
-			err = pc.SetLocalDescription(answer)
-			if err != nil {
-				log.Printf("Failed to set local description: %v", err)
-				continue
-			}
-
-			// Send answer
-			if err := conn.WriteJSON(Message{
-				Type: "answer",
-				SDP:  answer.SDP,
-			}); err != nil {
-				log.Printf("Failed to send answer: %v", err)
-			}
-		}
-	}
-
-	log.Printf("Broadcaster disconnected")
-	broadcaster = nil
-}
-
-func handleViewer(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
-		return
-	}
-	defer conn.Close()
-
-	pc, err := createPeerConnection()
-	if err != nil {
-		log.Printf("Failed to create peer connection: %v", err)
-		return
-	}
-	defer pc.Close()
-
-	// Generate viewer ID
-	viewerID := generateViewerID()
-
-	// Create viewer connection
-	v := &WebRTCConnection{
-		PeerConnection: pc,
-		WebSocket:      conn,
-	}
-
-	// Add viewer to the map
-	viewersMutex.Lock()
-	viewers[viewerID] = v
-	viewersMutex.Unlock()
-
-	defer func() {
-		viewersMutex.Lock()
-		delete(viewers, viewerID)
-		viewersMutex.Unlock()
-	}()
-
-	// Add broadcaster tracks to viewer if broadcaster exists
-	if broadcaster != nil {
-		for _, track := range broadcaster.StreamTracks {
-			if _, err := pc.AddTrack(track); err != nil {
-				log.Printf("Failed to add track to viewer: %v", err)
-			}
-		}
-	}
-
-	// Handle incoming messages
-	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			log.Printf("WebSocket read error: %v", err)
-			break
-		}
-
-		var message Message
-		if err := json.Unmarshal(msg, &message); err != nil {
-			log.Printf("Failed to parse message: %v", err)
-			continue
-		}
-
-		log.Printf("Received message type: %s", message.Type)
-
-		switch message.Type {
-		case "offer":
-			// Handle the offer
-			err = pc.SetRemoteDescription(webrtc.SessionDescription{
-				Type: webrtc.SDPTypeOffer,
-				SDP:  message.SDP,
-			})
-			if err != nil {
-				log.Printf("Failed to set remote description: %v", err)
-				continue
-			}
-
-			// Create answer
-			answer, err := pc.CreateAnswer(nil)
-			if err != nil {
-				log.Printf("Failed to create answer: %v", err)
-				continue
-			}
-
-			// Set local description
-			err = pc.SetLocalDescription(answer)
-			if err != nil {
-				log.Printf("Failed to set local description: %v", err)
-				continue
-			}
-
-			// Send answer
-			if err := conn.WriteJSON(Message{
-				Type: "answer",
-				SDP:  answer.SDP,
-			}); err != nil {
-				log.Printf("Failed to send answer: %v", err)
-			}
-		}
-	}
+	return webrtc.NewPeerConnection(webrtcConfig)
 }
 
 func generateViewerID() string {
 	return "viewer-" + string(os.Getpid())
-}
-
-func generateViewerID() string {
-	return "viewer-" + string(os.Getpid()) 
+} 
