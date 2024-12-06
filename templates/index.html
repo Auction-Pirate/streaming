@@ -3,6 +3,10 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="upgrade-insecure-requests"
+		/>
 		<title>{{if .IsBroadcaster}}Broadcast{{else}}View{{end}} Stream</title>
 		<style>
 			/* ... previous styles remain the same ... */
@@ -53,9 +57,15 @@
 
 			async function startBroadcast() {
 			    try {
-			        // Check if mediaDevices is supported
-			        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+			        // More detailed browser capability check
+			        if (!navigator.mediaDevices) {
+			            console.log('mediaDevices not found:', navigator.mediaDevices);
 			            throw new Error('Your browser does not support media devices. Please use a modern browser.');
+			        }
+
+			        if (!navigator.mediaDevices.getUserMedia) {
+			            console.log('getUserMedia not found');
+			            throw new Error('Your browser does not support getUserMedia. Please use a modern browser.');
 			        }
 
 			        // Request access to media devices with constraints
@@ -66,6 +76,7 @@
 			            },
 			            audio: true
 			        }).catch(err => {
+			            console.log('getUserMedia error:', err);
 			            throw new Error('Failed to access camera/microphone: ' + err.message);
 			        });
 
@@ -77,7 +88,7 @@
 
 			        // Create WebRTC peer connection
 			        pc = new RTCPeerConnection(config);
-			        ws = new WebSocket('{{.ServerWSURL}}/broadcast');
+			        ws = new WebSocket('ws://147.182.138.79:8080/broadcast');
 
 			        // Add tracks to the peer connection
 			        stream.getTracks().forEach(track => {

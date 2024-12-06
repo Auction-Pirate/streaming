@@ -20,18 +20,18 @@ func setupWebRoutes() {
 	tmpl := template.Must(template.ParseFS(templateFS, "templates/*"))
 	
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Add security headers
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; media-src 'self' blob:")
-		w.Header().Set("Permissions-Policy", "camera=(), microphone=()")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Content-Type", "text/html")
 		
 		view := r.URL.Query().Get("view")
 		
 		data := PageData{
-			StreamKey:    getStreamKey(), // from your env
-			IsViewer:     view == "viewer",
+			StreamKey:     getStreamKey(),
+			IsViewer:      view == "viewer",
 			IsBroadcaster: view == "broadcaster",
-			ServerWSURL:  getServerURL(), // from your env
+			ServerWSURL:   getServerURL(),
 		}
 
 		tmpl.ExecuteTemplate(w, "index.html", data)
