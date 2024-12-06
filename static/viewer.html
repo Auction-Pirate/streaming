@@ -86,6 +86,14 @@
 						}
 					};
 
+					pc.onconnectionstatechange = () => {
+						console.log("Connection state:", pc.connectionState);
+					};
+
+					pc.onsignalingstatechange = () => {
+						console.log("Signaling state:", pc.signalingState);
+					};
+
 					pc.ontrack = (event) => {
 						console.log("Received track:", event.track.kind);
 						if (event.track.kind === "audio") {
@@ -93,6 +101,7 @@
 							audio.srcObject = audioStream;
 							audio
 								.play()
+								.then(() => console.log("Audio playing successfully"))
 								.catch((err) => console.error("Error playing audio:", err));
 							updateStatus("Receiving audio", "#4CAF50");
 						}
@@ -117,7 +126,7 @@
 							ws.send(
 								JSON.stringify({
 									type: "offer",
-									data: offer.sdp,
+									sdp: offer.sdp,
 								})
 							);
 							console.log("Sent offer to server");
@@ -146,7 +155,7 @@
 								case "answer":
 									const answer = new RTCSessionDescription({
 										type: "answer",
-										sdp: msg.data,
+										sdp: msg.sdp,
 									});
 									await pc.setRemoteDescription(answer);
 									console.log("Set remote description");
