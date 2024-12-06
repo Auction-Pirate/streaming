@@ -227,8 +227,104 @@ func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleViewer(w http.ResponseWriter, r *http.Request) {
-	// Copy the HandleViewer function content from webrtc.go
-	// ... (copy the entire function content)
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade error: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	pc, err := createPeerConnection()
+	if err != nil {
+		log.Printf("Failed to create peer connection: %v", err)
+		return
+	}
+	defer pc.Close()
+
+	// Generate viewer ID
+	viewerID := generateViewerID()
+
+	// Create viewer connection
+	v := &WebRTCConnection{
+		PeerConnection: pc,
+		WebSocket:      conn,
+	}
+
+	// Add viewer to the map
+	viewersMutex.Lock()
+	viewers[viewerID] = v
+	viewersMutex.Unlock()
+
+	defer func() {
+		viewersMutex.Lock()
+		delete(viewers, viewerID)
+		viewersMutex.Unlock()
+	}()
+
+	// Add broadcaster tracks to viewer if broadcaster exists
+	if broadcaster != nil {
+		for _, track := range broadcaster.StreamTracks {
+			if _, err := pc.AddTrack(track); err != nil {
+				log.Printf("Failed to add track to viewer: %v", err)
+			}
+		}
+	}
+
+	// Handle incoming messages
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			log.Printf("WebSocket read error: %v", err)
+			break
+		}
+
+		var message Message
+		if err := json.Unmarshal(msg, &message); err != nil {
+			log.Printf("Failed to parse message: %v", err)
+			continue
+		}
+
+		log.Printf("Received message type: %s", message.Type)
+
+		switch message.Type {
+		case "offer":
+			// Handle the offer
+			err = pc.SetRemoteDescription(webrtc.SessionDescription{
+				Type: webrtc.SDPTypeOffer,
+				SDP:  message.SDP,
+			})
+			if err != nil {
+				log.Printf("Failed to set remote description: %v", err)
+				continue
+			}
+
+			// Create answer
+			answer, err := pc.CreateAnswer(nil)
+			if err != nil {
+				log.Printf("Failed to create answer: %v", err)
+				continue
+			}
+
+			// Set local description
+			err = pc.SetLocalDescription(answer)
+			if err != nil {
+				log.Printf("Failed to set local description: %v", err)
+				continue
+			}
+
+			// Send answer
+			if err := conn.WriteJSON(Message{
+				Type: "answer",
+				SDP:  answer.SDP,
+			}); err != nil {
+				log.Printf("Failed to send answer: %v", err)
+			}
+		}
+	}
+}
+
+func generateViewerID() string {
+	return "viewer-" + string(os.Getpid())
 }
 
 func generateViewerID() string {
