@@ -5,7 +5,32 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>{{if .IsBroadcaster}}Broadcast{{else}}View{{end}} Stream</title>
 		<style>
-			/* ... previous styles remain the same ... */
+			body {
+				margin: 0;
+				padding: 20px;
+				font-family: Arial, sans-serif;
+				background: #f0f0f0;
+			}
+			.container {
+				max-width: 1200px;
+				margin: 0 auto;
+			}
+			.video-container {
+				position: relative;
+				background: #000;
+				border-radius: 8px;
+				overflow: hidden;
+				margin-bottom: 20px;
+				aspect-ratio: 16/9;
+			}
+			video {
+				width: 100%;
+				height: 100%;
+				object-fit: cover;
+				background: #000;
+				transform: scaleX(-1); /* Mirror the video for selfie view */
+			}
+			/* ... rest of your styles ... */
 		</style>
 	</head>
 	<body>
@@ -21,9 +46,10 @@
 				<video
 					id="video"
 					playsinline
+					autoplay
+					muted
 					{{if
-					not
-					.IsBroadcaster}}autoplay{{end}}
+					.IsBroadcaster}}muted{{end}}
 				></video>
 			</div>
 
@@ -68,7 +94,8 @@
 			        stream = await navigator.mediaDevices.getUserMedia({
 			            video: {
 			                width: { ideal: 1280 },
-			                height: { ideal: 720 }
+			                height: { ideal: 720 },
+			                frameRate: { ideal: 30 }
 			            },
 			            audio: true
 			        }).catch(err => {
@@ -78,9 +105,14 @@
 
 			        // Display the stream in the video element
 			        videoElement.srcObject = stream;
-			        await videoElement.play().catch(err => {
-			            throw new Error('Failed to play video: ' + err.message);
-			        });
+			        videoElement.muted = true; // Mute local preview to prevent feedback
+			        try {
+			            await videoElement.play();
+			        } catch (err) {
+			            console.error('Error playing video:', err);
+			            // Try playing without autoplay
+			            videoElement.autoplay = true;
+			        }
 
 			        // Create WebRTC peer connection
 			        pc = new RTCPeerConnection(config);
