@@ -62,7 +62,9 @@
 					await pc.setLocalDescription(offer);
 
 					// Connect to WebSocket
-					ws = new WebSocket("ws://147.182.138.79:8080/broadcast");
+					ws = new WebSocket(
+						`ws://${window.location.hostname}:${window.location.port}/broadcast`
+					);
 
 					ws.onopen = () => {
 						console.log("WebSocket connected");

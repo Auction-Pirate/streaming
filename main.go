@@ -16,6 +16,8 @@ var (
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
 	}
 
 	// Global state
@@ -41,26 +43,61 @@ func main() {
 		log.Printf("Warning: .env file not found")
 	}
 
-	// Serve static files from the static directory
-	fs := http.FileServer(http.Dir("static"))
-	http.Handle("/static/", http.StripPrefix("/static/", fs))
+	// CORS middleware
+	corsMiddleware := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Set CORS headers
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	// WebSocket endpoints - update these to match the client paths
-	http.HandleFunc("/broadcast", handleBroadcaster)
-	http.HandleFunc("/view", handleViewer)
+			// Handle preflight requests
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	// Create router
+	mux := http.NewServeMux()
+
+	// Serve static files
+	fs := http.FileServer(http.Dir("static"))
+	mux.Handle("/static/", http.StripPrefix("/static/", fs))
+
+	// WebSocket endpoints
+	mux.HandleFunc("/broadcast", handleBroadcaster)
+	mux.HandleFunc("/view", handleViewer)
 
 	// Web routes
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "static/index.html")
 	})
 
+	// Wrap with CORS middleware
+	handler := corsMiddleware(mux)
+
+	// Get port from environment
 	port := os.Getenv("WEBRTC_PORT")
 	if port == "" {
 		port = "8080"
 	}
 
+	// Start server
 	log.Printf("Server starting on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Printf("Access broadcaster at: http://%s:%s/?view=broadcaster", os.Getenv("SERVER_HOST"), port)
+	log.Printf("Access viewer at: http://%s:%s/?view=viewer", os.Getenv("SERVER_HOST"), port)
+	
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: handler,
+	}
+
+	log.Fatal(server.ListenAndServe())
 }
 
 func createPeerConnection() (*webrtc.PeerConnection, error) {
