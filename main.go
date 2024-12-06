@@ -206,7 +206,7 @@ func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
 
 	// Handle incoming tracks
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		log.Printf("Got remote track: %v, kind: %v", remoteTrack.ID(), remoteTrack.Kind())
+		log.Printf("Got remote track from broadcaster: %v, kind: %v", remoteTrack.ID(), remoteTrack.Kind())
 		
 		// Create a local track to forward to viewers
 		localTrack, err := webrtc.NewTrackLocalStaticRTP(
@@ -219,7 +219,7 @@ func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		b.StreamTracks = append(b.StreamTracks, localTrack)
-		log.Printf("Created local track: %v", localTrack.ID())
+		log.Printf("Created local track for forwarding: %v", localTrack.ID())
 
 		// Forward RTP packets from broadcaster to all viewers
 		go func() {
@@ -232,8 +232,10 @@ func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
 
 				viewersMutex.RLock()
 				for id, viewer := range viewers {
-					if err := viewer.StreamTracks[0].WriteRTP(packet); err != nil {
-						log.Printf("Failed to write RTP to viewer %s: %v", id, err)
+					if len(viewer.StreamTracks) > 0 {
+						if err := viewer.StreamTracks[0].WriteRTP(packet); err != nil {
+							log.Printf("Failed to write RTP to viewer %s: %v", id, err)
+						}
 					}
 				}
 				viewersMutex.RUnlock()
@@ -320,6 +322,7 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 
 	// Generate viewer ID
 	viewerID := generateViewerID()
+	log.Printf("New viewer connected: %s", viewerID)
 
 	// Create viewer connection
 	v := &WebRTCConnection{
@@ -327,7 +330,7 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 		WebSocket:      conn,
 	}
 
-	// Add viewer to the map
+	// Add viewer to the map BEFORE processing offer
 	viewersMutex.Lock()
 	viewers[viewerID] = v
 	viewersMutex.Unlock()
@@ -335,75 +338,86 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		viewersMutex.Lock()
 		delete(viewers, viewerID)
+		
 		viewersMutex.Unlock()
+		log.Printf("Viewer disconnected: %s", viewerID)
 	}()
 
 	// Add broadcaster tracks to viewer if broadcaster exists
 	if broadcaster != nil {
-		log.Printf("Adding %d tracks from broadcaster", len(broadcaster.StreamTracks))
+		log.Printf("Adding %d tracks from broadcaster to viewer %s", 
+			len(broadcaster.StreamTracks), viewerID)
+		
 		for _, track := range broadcaster.StreamTracks {
-			if _, err := pc.AddTrack(track); err != nil {
-				log.Printf("Add track error: %v", err)
+			rtpSender, err := pc.AddTrack(track)
+			if err != nil {
+				log.Printf("Failed to add track to viewer %s: %v", viewerID, err)
 				continue
 			}
-			log.Printf("Added track: %v", track.ID())
+			log.Printf("Added track %s to viewer %s", track.ID(), viewerID)
+
+			// Handle RTP packets
+			go func() {
+				rtcpBuf := make([]byte, 1500)
+				for {
+					if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
+						return
+					}
+				}
+			}()
 		}
+	} else {
+		log.Printf("No broadcaster present for viewer %s", viewerID)
 	}
 
 	// Handle incoming messages
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("Read error: %v", err)
+			log.Printf("Read error from viewer %s: %v", viewerID, err)
 			break
 		}
 
 		var message Message
 		if err := json.Unmarshal(msg, &message); err != nil {
-			log.Printf("Parse error: %v", err)
+			log.Printf("Parse error from viewer %s: %v", viewerID, err)
 			continue
 		}
 
 		switch message.Type {
 		case "offer":
-			log.Printf("Received offer from viewer")
+			log.Printf("Received offer from viewer %s", viewerID)
 			
-			// Set remote description first
 			offer := webrtc.SessionDescription{
 				Type: webrtc.SDPTypeOffer,
 				SDP:  message.SDP,
 			}
 
 			if err := pc.SetRemoteDescription(offer); err != nil {
-				log.Printf("Set remote desc error: %v", err)
+				log.Printf("Failed to set remote description for viewer %s: %v", viewerID, err)
 				continue
 			}
-			log.Printf("Set remote description successfully")
+			log.Printf("Set remote description for viewer %s", viewerID)
 
-			// Create answer
 			answer, err := pc.CreateAnswer(nil)
 			if err != nil {
-				log.Printf("Create answer error: %v", err)
+				log.Printf("Failed to create answer for viewer %s: %v", viewerID, err)
 				continue
 			}
-			log.Printf("Created answer")
 
-			// Set local description
 			if err := pc.SetLocalDescription(answer); err != nil {
-				log.Printf("Set local desc error: %v", err)
+				log.Printf("Failed to set local description for viewer %s: %v", viewerID, err)
 				continue
 			}
-			log.Printf("Set local description")
 
-			// Send answer back to viewer
 			resp := Message{
 				Type: "answer",
 				SDP:  answer.SDP,
 			}
 			if err := conn.WriteJSON(resp); err != nil {
-				log.Printf("Write error: %v", err)
+				log.Printf("Failed to send answer to viewer %s: %v", viewerID, err)
 			}
-			log.Printf("Sent answer to viewer")
+			log.Printf("Sent answer to viewer %s", viewerID)
 		}
 	}
 } 
