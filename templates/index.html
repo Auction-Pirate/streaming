@@ -3,10 +3,6 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<meta
-			http-equiv="Content-Security-Policy"
-			content="upgrade-insecure-requests"
-		/>
 		<title>{{if .IsBroadcaster}}Broadcast{{else}}View{{end}} Stream</title>
 		<style>
 			/* ... previous styles remain the same ... */
@@ -167,7 +163,7 @@
 			async function startViewing() {
 			    try {
 			        pc = new RTCPeerConnection(config);
-			        ws = new WebSocket('{{.ServerWSURL}}/view');
+			        ws = new WebSocket('ws://{{.ServerWSURL}}/view');
 
 			        pc.ontrack = (event) => {
 			            if (videoElement.srcObject !== event.streams[0]) {
