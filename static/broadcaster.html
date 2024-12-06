@@ -43,6 +43,20 @@
 				border-radius: 8px;
 				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 			}
+			.volume-meter {
+				margin: 20px auto;
+				width: 300px;
+				height: 20px;
+				background: #f0f0f0;
+				border-radius: 10px;
+				overflow: hidden;
+			}
+			.volume-level {
+				width: 0%;
+				height: 100%;
+				background: #4caf50;
+				transition: width 0.1s;
+			}
 		</style>
 	</head>
 	<body>
@@ -57,16 +71,25 @@
 				<button id="stopButton" disabled>Stop Broadcasting</button>
 				<span id="status" class="status">Disconnected</span>
 			</div>
+
+			<div class="volume-meter">
+				<div id="volumeLevel" class="volume-level"></div>
+			</div>
 		</div>
 
 		<script>
 			const startButton = document.getElementById("startButton");
 			const stopButton = document.getElementById("stopButton");
 			const statusElement = document.getElementById("status");
+			const volumeLevel = document.getElementById("volumeLevel");
 
 			let pc = null;
 			let ws = null;
 			let stream = null;
+			let audioContext = null;
+			let audioAnalyser = null;
+			let dataArray = null;
+			let animationFrame = null;
 
 			const config = {
 				iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -78,25 +101,69 @@
 				statusElement.style.color = color;
 			}
 
+			function setupAudioAnalyser(stream) {
+				if (!audioContext) {
+					audioContext = new (window.AudioContext ||
+						window.webkitAudioContext)();
+				}
+
+				const source = audioContext.createMediaStreamSource(stream);
+				audioAnalyser = audioContext.createAnalyser();
+				audioAnalyser.fftSize = 256;
+				source.connect(audioAnalyser);
+
+				dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+				animateVolumeMeter();
+			}
+
+			function animateVolumeMeter() {
+				if (!audioAnalyser || !dataArray) return;
+
+				audioAnalyser.getByteFrequencyData(dataArray);
+				const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+				const volume = Math.min(100, Math.round((average / 255) * 100));
+
+				volumeLevel.style.width = volume + "%";
+				volumeLevel.style.backgroundColor = volume > 50 ? "#ff4444" : "#4caf50";
+
+				animationFrame = requestAnimationFrame(animateVolumeMeter);
+			}
+
 			async function startBroadcast() {
 				try {
 					pc = new RTCPeerConnection(config);
 					console.log("Created peer connection:", pc);
 
+					// Add logging for ICE connection state changes
+					pc.oniceconnectionstatechange = () => {
+						console.log("ICE Connection State:", pc.iceConnectionState);
+					};
+
+					pc.onconnectionstatechange = () => {
+						console.log("Connection State:", pc.connectionState);
+					};
+
+					// Get audio stream
 					stream = await navigator.mediaDevices.getUserMedia({
 						audio: {
 							echoCancellation: true,
 							noiseSuppression: true,
-							sampleRate: 44100,
+							autoGainControl: true,
+							sampleRate: 48000,
 						},
 						video: false,
 					});
 
+					// Setup volume meter
+					setupAudioAnalyser(stream);
+
+					// Add tracks to peer connection
 					stream.getTracks().forEach((track) => {
-						console.log("Adding track:", track.kind);
-						pc.addTrack(track, stream);
+						const sender = pc.addTrack(track, stream);
+						console.log("Added track to peer connection:", track.kind, sender);
 					});
 
+					// Create WebSocket connection
 					ws = new WebSocket("ws://147.182.138.79:8080/broadcast");
 
 					ws.onopen = async () => {
@@ -104,6 +171,7 @@
 						try {
 							const offer = await pc.createOffer();
 							await pc.setLocalDescription(offer);
+							console.log("Local description set:", offer);
 
 							ws.send(
 								JSON.stringify({
@@ -121,6 +189,7 @@
 					ws.onclose = () => {
 						console.log("WebSocket closed");
 						updateStatus("Disconnected", "red");
+						stopBroadcast();
 					};
 
 					ws.onerror = (error) => {
@@ -131,6 +200,8 @@
 					ws.onmessage = async (e) => {
 						try {
 							const msg = JSON.parse(e.data);
+							console.log("Received message:", msg.type);
+
 							if (msg.type === "answer") {
 								await pc.setRemoteDescription(
 									new RTCSessionDescription({
@@ -138,7 +209,11 @@
 										sdp: msg.sdp,
 									})
 								);
+								console.log("Remote description set");
 								updateStatus("Broadcasting Audio", "green");
+							} else if (msg.type === "candidate" && msg.candidate) {
+								await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+								console.log("Added ICE candidate");
 							}
 						} catch (error) {
 							console.error("Error handling message:", error);
@@ -147,6 +222,7 @@
 
 					startButton.disabled = true;
 					stopButton.disabled = false;
+					updateStatus("Starting broadcast...", "orange");
 				} catch (err) {
 					console.error("Error:", err);
 					updateStatus("Error: " + err.message, "#f44336");
@@ -164,8 +240,24 @@
 				if (ws) {
 					ws.close();
 				}
+				if (audioContext) {
+					audioContext.close();
+				}
+				if (animationFrame) {
+					cancelAnimationFrame(animationFrame);
+				}
+
+				pc = null;
+				ws = null;
+				stream = null;
+				audioContext = null;
+				audioAnalyser = null;
+				dataArray = null;
+				animationFrame = null;
+
 				startButton.disabled = false;
 				stopButton.disabled = true;
+				volumeLevel.style.width = "0%";
 				updateStatus("Disconnected");
 			}
 
