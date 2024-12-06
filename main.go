@@ -46,8 +46,8 @@ func main() {
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
 	// WebSocket endpoints - update these to match the client paths
-	http.HandleFunc("/broadcast", HandleBroadcaster)
-	http.HandleFunc("/view", HandleViewer)
+	http.HandleFunc("/broadcast", handleBroadcaster)
+	http.HandleFunc("/view", handleViewer)
 
 	// Web routes
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -72,4 +72,19 @@ func createPeerConnection() (*webrtc.PeerConnection, error) {
 		},
 	}
 	return webrtc.NewPeerConnection(config)
+}
+
+// Add the handler functions here
+func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
+	// Copy the HandleBroadcaster function content from webrtc.go
+	// ... (copy the entire function content)
+}
+
+func handleViewer(w http.ResponseWriter, r *http.Request) {
+	// Copy the HandleViewer function content from webrtc.go
+	// ... (copy the entire function content)
+}
+
+func generateViewerID() string {
+	return "viewer-" + string(os.Getpid())
 } 
