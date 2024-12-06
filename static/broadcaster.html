@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 	<head>
-		<title>WebRTC Broadcaster</title>
+		<title>WebRTC Audio Broadcaster</title>
 		<style>
 			.container {
 				max-width: 800px;
@@ -52,17 +52,14 @@
 				<p>Your stream key: <strong>your-stream-key</strong></p>
 			</div>
 
-			<video id="video" autoplay playsinline muted></video>
-
 			<div class="controls">
-				<button id="startButton">Start Broadcasting</button>
+				<button id="startButton">Start Broadcasting Audio</button>
 				<button id="stopButton" disabled>Stop Broadcasting</button>
 				<span id="status" class="status">Disconnected</span>
 			</div>
 		</div>
 
 		<script>
-			const video = document.getElementById("video");
 			const startButton = document.getElementById("startButton");
 			const stopButton = document.getElementById("stopButton");
 			const statusElement = document.getElementById("status");
@@ -83,34 +80,23 @@
 
 			async function startBroadcast() {
 				try {
-					// Create WebRTC peer connection first
 					pc = new RTCPeerConnection(config);
 					console.log("Created peer connection:", pc);
 
-					// Get media stream
 					stream = await navigator.mediaDevices.getUserMedia({
-						video: {
-							width: 1280,
-							height: 720,
-							frameRate: 30,
-							facingMode: "user",
-						},
 						audio: {
 							echoCancellation: true,
 							noiseSuppression: true,
 							sampleRate: 44100,
 						},
+						video: false,
 					});
 
-					// Show stream in video element
-					video.srcObject = stream;
-
-					// Add tracks
 					stream.getTracks().forEach((track) => {
+						console.log("Adding track:", track.kind);
 						pc.addTrack(track, stream);
 					});
 
-					// Create WebSocket connection
 					ws = new WebSocket("ws://147.182.138.79:8080/broadcast");
 
 					ws.onopen = async () => {
@@ -119,12 +105,11 @@
 							const offer = await pc.createOffer();
 							await pc.setLocalDescription(offer);
 
-							// Send offer with the correct stream key
 							ws.send(
 								JSON.stringify({
 									type: "offer",
 									sdp: offer.sdp,
-									streamKey: "your-secret-stream-key", // Make sure this matches your .env file
+									streamKey: "your-secret-stream-key",
 								})
 							);
 							console.log("Sent offer to server");
@@ -153,7 +138,7 @@
 										sdp: msg.sdp,
 									})
 								);
-								updateStatus("Broadcasting", "green");
+								updateStatus("Broadcasting Audio", "green");
 							}
 						} catch (error) {
 							console.error("Error handling message:", error);
@@ -169,7 +154,7 @@
 				}
 			}
 
-			function stop() {
+			function stopBroadcast() {
 				if (stream) {
 					stream.getTracks().forEach((track) => track.stop());
 				}
@@ -179,14 +164,13 @@
 				if (ws) {
 					ws.close();
 				}
-				video.srcObject = null;
 				startButton.disabled = false;
 				stopButton.disabled = true;
 				updateStatus("Disconnected");
 			}
 
 			startButton.addEventListener("click", startBroadcast);
-			stopButton.addEventListener("click", stop);
+			stopButton.addEventListener("click", stopBroadcast);
 		</script>
 	</body>
 </html>

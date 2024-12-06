@@ -1,18 +1,12 @@
 <!DOCTYPE html>
 <html>
 	<head>
-		<title>WebRTC Viewer</title>
+		<title>WebRTC Audio Viewer</title>
 		<style>
 			.container {
 				max-width: 800px;
 				margin: 0 auto;
 				padding: 20px;
-			}
-			video {
-				width: 100%;
-				height: auto;
-				background: #000;
-				border-radius: 8px;
 			}
 			.status {
 				margin-top: 10px;
@@ -21,17 +15,30 @@
 				background: #f5f5f5;
 				text-align: center;
 			}
+			.audio-indicator {
+				width: 50px;
+				height: 50px;
+				border-radius: 25px;
+				background-color: #ccc;
+				margin: 20px auto;
+				transition: background-color 0.3s;
+			}
+			.audio-indicator.active {
+				background-color: #4caf50;
+			}
 		</style>
 	</head>
 	<body>
 		<div class="container">
-			<video id="video" autoplay playsinline controls></video>
+			<div id="audioIndicator" class="audio-indicator"></div>
 			<div id="status" class="status">Waiting for broadcast...</div>
+			<audio id="audio" autoplay></audio>
 		</div>
 
 		<script>
-			const video = document.getElementById("video");
+			const audio = document.getElementById("audio");
 			const statusElement = document.getElementById("status");
+			const audioIndicator = document.getElementById("audioIndicator");
 			let pc = null;
 			let ws = null;
 
@@ -43,6 +50,10 @@
 				console.log("Status:", message);
 				statusElement.textContent = message;
 				statusElement.style.color = color;
+				audioIndicator.classList.toggle(
+					"active",
+					message.includes("Connected")
+				);
 			}
 
 			async function checkBroadcastStatus() {
@@ -73,10 +84,8 @@
 					ws.close();
 					ws = null;
 				}
-				if (video.srcObject) {
-					video.srcObject.getTracks().forEach((track) => track.stop());
-					video.srcObject = null;
-				}
+				audio.srcObject = null;
+				audioIndicator.classList.remove("active");
 			}
 
 			async function connectToStream() {
@@ -88,13 +97,9 @@
 
 					pc.ontrack = (event) => {
 						console.log("Received track:", event.track.kind);
-						if (!video.srcObject) {
-							video.srcObject = new MediaStream();
+						if (event.track.kind === "audio") {
+							audio.srcObject = new MediaStream([event.track]);
 						}
-						video.srcObject.addTrack(event.track);
-						video
-							.play()
-							.catch((err) => console.error("Error playing video:", err));
 					};
 
 					pc.oniceconnectionstatechange = () => {
@@ -106,19 +111,13 @@
 						}
 					};
 
-					pc.onicecandidate = (event) => {
-						if (event.candidate) {
-							console.log("New ICE candidate:", event.candidate);
-						}
-					};
-
 					ws = new WebSocket("ws://147.182.138.79:8080/view");
 
 					ws.onopen = async () => {
 						console.log("WebSocket connected");
 						const offer = await pc.createOffer({
-							offerToReceiveVideo: true,
 							offerToReceiveAudio: true,
+							offerToReceiveVideo: false,
 						});
 						await pc.setLocalDescription(offer);
 
@@ -169,20 +168,6 @@
 
 			// Check for broadcast status every 2 seconds
 			setInterval(checkBroadcastStatus, 2000);
-
-			// Handle video events
-			video.onloadedmetadata = () => {
-				console.log("Video metadata loaded");
-				video.play().catch((err) => console.error("Error playing video:", err));
-			};
-
-			video.onplay = () => {
-				console.log("Video started playing");
-			};
-
-			video.onerror = (error) => {
-				console.error("Video error:", error);
-			};
 
 			// Cleanup on page unload
 			window.onbeforeunload = cleanup;
