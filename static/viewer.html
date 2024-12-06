@@ -106,17 +106,34 @@
 					pc = new RTCPeerConnection(config);
 					console.log("Created peer connection");
 
+					pc.onicecandidate = (event) => {
+						if (event.candidate) {
+							console.log("New ICE candidate:", event.candidate);
+							if (ws && ws.readyState === WebSocket.OPEN) {
+								ws.send(
+									JSON.stringify({
+										type: "candidate",
+										candidate: event.candidate,
+									})
+								);
+							}
+						}
+					};
+
 					pc.oniceconnectionstatechange = () => {
 						console.log("ICE Connection State:", pc.iceConnectionState);
+						if (pc.iceConnectionState === "connected") {
+							updateStatus("Connected to broadcast", "#4CAF50");
+						} else if (pc.iceConnectionState === "disconnected") {
+							updateStatus("Connection lost", "red");
+						}
 					};
 
 					pc.ontrack = (event) => {
 						console.log("Received track:", event.track.kind);
-
 						const stream = new MediaStream([event.track]);
 						audio.srcObject = stream;
 
-						// Setup audio context and analyzer
 						audioContext = new (window.AudioContext ||
 							window.webkitAudioContext)();
 						const source = audioContext.createMediaStreamSource(stream);
@@ -127,8 +144,6 @@
 						source.connect(audioContext.destination);
 
 						updateVolumeMeter();
-						updateStatus("Connected to broadcast", "#4CAF50");
-
 						playButton.disabled = true;
 						stopButton.disabled = false;
 					};
@@ -137,18 +152,26 @@
 
 					ws.onopen = async () => {
 						console.log("WebSocket connected");
-						const offer = await pc.createOffer({
-							offerToReceiveAudio: true,
-							offerToReceiveVideo: false,
-						});
+						try {
+							const offer = await pc.createOffer({
+								offerToReceiveAudio: true,
+								offerToReceiveVideo: false,
+								iceRestart: true,
+							});
 
-						await pc.setLocalDescription(offer);
-						ws.send(
-							JSON.stringify({
-								type: "offer",
-								sdp: offer.sdp,
-							})
-						);
+							await pc.setLocalDescription(offer);
+							console.log("Local description set:", offer.sdp);
+
+							ws.send(
+								JSON.stringify({
+									type: "offer",
+									sdp: offer.sdp,
+								})
+							);
+						} catch (err) {
+							console.error("Error creating offer:", err);
+							updateStatus("Error: " + err.message, "red");
+						}
 					};
 
 					ws.onclose = () => {
@@ -162,13 +185,30 @@
 							const msg = JSON.parse(e.data);
 							console.log("Received message:", msg.type);
 
-							if (msg.type === "answer") {
-								await pc.setRemoteDescription(
-									new RTCSessionDescription({
-										type: "answer",
-										sdp: msg.sdp,
-									})
-								);
+							switch (msg.type) {
+								case "answer":
+									console.log("Setting remote description");
+									await pc.setRemoteDescription(
+										new RTCSessionDescription({
+											type: "answer",
+											sdp: msg.sdp,
+										})
+									);
+									console.log("Remote description set");
+									break;
+
+								case "candidate":
+									if (msg.candidate) {
+										try {
+											await pc.addIceCandidate(
+												new RTCIceCandidate(msg.candidate)
+											);
+											console.log("Added ICE candidate");
+										} catch (err) {
+											console.error("Error adding ICE candidate:", err);
+										}
+									}
+									break;
 							}
 						} catch (error) {
 							console.error("Error handling message:", error);
@@ -208,7 +248,6 @@
 				updateStatus("Waiting for broadcast...");
 			}
 
-			// Button handlers
 			playButton.addEventListener("click", connectToStream);
 			stopButton.addEventListener("click", cleanup);
 			muteButton.addEventListener("click", () => {
@@ -216,7 +255,6 @@
 				muteButton.textContent = audio.muted ? "Unmute" : "Mute";
 			});
 
-			// Check broadcast status periodically
 			async function checkBroadcastStatus() {
 				try {
 					const response = await fetch("/broadcast-status");
@@ -234,11 +272,9 @@
 				}
 			}
 
-			// Start checking for broadcast
 			checkBroadcastStatus();
 			setInterval(checkBroadcastStatus, 2000);
 
-			// Cleanup on page unload
 			window.onbeforeunload = cleanup;
 		</script>
 	</body>
