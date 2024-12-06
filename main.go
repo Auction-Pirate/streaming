@@ -334,6 +334,15 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 		viewersMutex.Unlock()
 	}()
 
+	// Add broadcaster tracks to viewer if broadcaster exists
+	if broadcaster != nil {
+		for _, track := range broadcaster.StreamTracks {
+			if _, err := pc.AddTrack(track); err != nil {
+				log.Printf("Add track error: %v", err)
+			}
+		}
+	}
+
 	// Handle incoming messages
 	for {
 		_, msg, err := conn.ReadMessage()
@@ -350,32 +359,30 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 
 		switch message.Type {
 		case "offer":
-			// Set remote description
-			err = pc.SetRemoteDescription(webrtc.SessionDescription{
+			log.Printf("Received offer from viewer")
+			
+			// Parse and set the remote description
+			offer := webrtc.SessionDescription{
 				Type: webrtc.SDPTypeOffer,
 				SDP:  message.SDP,
-			})
+			}
+
+			err = pc.SetRemoteDescription(offer)
 			if err != nil {
 				log.Printf("Set remote desc error: %v", err)
 				continue
 			}
-
-			// Add broadcaster tracks to viewer
-			if broadcaster != nil {
-				for _, track := range broadcaster.StreamTracks {
-					if _, err := pc.AddTrack(track); err != nil {
-						log.Printf("Add track error: %v", err)
-						continue
-					}
-				}
-			}
+			log.Printf("Set remote description successfully")
 
 			// Create answer
-			answer, err := pc.CreateAnswer(nil)
+			answer, err := pc.CreateAnswer(&webrtc.AnswerOptions{
+				VoiceActivityDetection: true,
+			})
 			if err != nil {
 				log.Printf("Create answer error: %v", err)
 				continue
 			}
+			log.Printf("Created answer")
 
 			// Set local description
 			err = pc.SetLocalDescription(answer)
@@ -383,8 +390,9 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Set local desc error: %v", err)
 				continue
 			}
+			log.Printf("Set local description")
 
-			// Send answer
+			// Send answer back to viewer
 			resp := Message{
 				Type: "answer",
 				SDP:  answer.SDP,
@@ -392,9 +400,11 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 			if err := conn.WriteJSON(resp); err != nil {
 				log.Printf("Write error: %v", err)
 			}
+			log.Printf("Sent answer to viewer")
+
 		case "candidate":
 			if broadcaster != nil {
-				// Forward the ICE candidate to the broadcaster
+				// Forward ICE candidate to broadcaster
 				if err := broadcaster.WebSocket.WriteJSON(message); err != nil {
 					log.Printf("Error forwarding ICE candidate: %v", err)
 				}
