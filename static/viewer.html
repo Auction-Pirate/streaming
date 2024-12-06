@@ -2,42 +2,24 @@
 <html>
 	<head>
 		<title>WebRTC Audio Viewer</title>
-		<script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.3/howler.min.js"></script>
 		<style>
 			.container {
 				max-width: 800px;
 				margin: 0 auto;
 				padding: 20px;
+				text-align: center;
 			}
 			.status {
-				margin-top: 10px;
+				margin: 20px 0;
 				padding: 10px;
 				border-radius: 4px;
 				background: #f5f5f5;
-				text-align: center;
-			}
-			.audio-indicator {
-				width: 50px;
-				height: 50px;
-				border-radius: 25px;
-				background-color: #ccc;
-				margin: 20px auto;
-				transition: background-color 0.3s;
-			}
-			.audio-indicator.active {
-				background-color: #4caf50;
 			}
 			.controls {
 				margin: 20px 0;
-				padding: 15px;
-				background: #fff;
-				border-radius: 8px;
-				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-				text-align: center;
 			}
 			button {
 				padding: 10px 20px;
-				margin: 0 5px;
 				font-size: 16px;
 				border: none;
 				border-radius: 4px;
@@ -49,11 +31,11 @@
 				background: #ccc;
 			}
 			.volume-meter {
-				margin: 20px auto;
 				width: 300px;
 				height: 20px;
 				background: #f0f0f0;
 				border-radius: 10px;
+				margin: 20px auto;
 				overflow: hidden;
 			}
 			.volume-level {
@@ -66,29 +48,32 @@
 	</head>
 	<body>
 		<div class="container">
-			<div id="audioIndicator" class="audio-indicator"></div>
+			<h2>Audio Viewer</h2>
 			<div id="status" class="status">Waiting for broadcast...</div>
 			<div class="controls">
 				<button id="playButton">Play</button>
-				<button id="stopButton">Stop</button>
+				<button id="stopButton" disabled>Stop</button>
 				<button id="muteButton">Mute</button>
 			</div>
 			<div class="volume-meter">
 				<div id="volumeLevel" class="volume-level"></div>
 			</div>
+			<audio id="audio" autoplay></audio>
 		</div>
 
 		<script>
-			const statusElement = document.getElementById("status");
-			const audioIndicator = document.getElementById("audioIndicator");
+			const audio = document.getElementById("audio");
+			const status = document.getElementById("status");
+			const volumeLevel = document.getElementById("volumeLevel");
 			const playButton = document.getElementById("playButton");
 			const stopButton = document.getElementById("stopButton");
 			const muteButton = document.getElementById("muteButton");
-			const volumeLevel = document.getElementById("volumeLevel");
 
 			let pc = null;
 			let ws = null;
-			let sound = null;
+			let audioContext = null;
+			let analyser = null;
+			let animationFrame = null;
 
 			const config = {
 				iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -96,12 +81,22 @@
 
 			function updateStatus(message, color = "black") {
 				console.log("Status:", message);
-				statusElement.textContent = message;
-				statusElement.style.color = color;
-				audioIndicator.classList.toggle(
-					"active",
-					message.includes("Connected")
-				);
+				status.textContent = message;
+				status.style.color = color;
+			}
+
+			function updateVolumeMeter() {
+				if (!analyser) return;
+
+				const dataArray = new Uint8Array(analyser.frequencyBinCount);
+				analyser.getByteFrequencyData(dataArray);
+				const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+				const volume = Math.min(100, Math.round((average / 255) * 100));
+
+				volumeLevel.style.width = volume + "%";
+				volumeLevel.style.backgroundColor = volume > 50 ? "#ff4444" : "#4caf50";
+
+				animationFrame = requestAnimationFrame(updateVolumeMeter);
 			}
 
 			async function connectToStream() {
@@ -111,86 +106,61 @@
 					pc = new RTCPeerConnection(config);
 					console.log("Created peer connection");
 
-					pc.onicecandidate = (event) => {
-						if (event.candidate) {
-							console.log("New ICE candidate:", event.candidate);
-							if (ws && ws.readyState === WebSocket.OPEN) {
-								ws.send(
-									JSON.stringify({
-										type: "candidate",
-										candidate: event.candidate.toJSON(),
-									})
-								);
-							}
-						}
-					};
-
 					pc.oniceconnectionstatechange = () => {
 						console.log("ICE Connection State:", pc.iceConnectionState);
 					};
 
 					pc.ontrack = (event) => {
 						console.log("Received track:", event.track.kind);
-						console.log("Track settings:", event.track.getSettings());
-
-						const audio = document.createElement("audio");
-						audio.autoplay = true;
-						audio.controls = true;
-						document.body.appendChild(audio);
 
 						const stream = new MediaStream([event.track]);
 						audio.srcObject = stream;
 
-						// Log when audio starts playing
-						audio.onplay = () => console.log("Audio started playing");
-						audio.onpause = () => console.log("Audio paused");
-						audio.onerror = (e) => console.error("Audio error:", e);
-
-						// Monitor audio levels
-						const audioContext = new (window.AudioContext ||
+						// Setup audio context and analyzer
+						audioContext = new (window.AudioContext ||
 							window.webkitAudioContext)();
 						const source = audioContext.createMediaStreamSource(stream);
-						const analyser = audioContext.createAnalyser();
+						analyser = audioContext.createAnalyser();
+						analyser.fftSize = 256;
+
 						source.connect(analyser);
 						source.connect(audioContext.destination);
 
-						const dataArray = new Uint8Array(analyser.frequencyBinCount);
-						function updateVolume() {
-							analyser.getByteFrequencyData(dataArray);
-							const average =
-								dataArray.reduce((a, b) => a + b) / dataArray.length;
-							console.log("Audio level:", average);
-							requestAnimationFrame(updateVolume);
-						}
-						updateVolume();
+						updateVolumeMeter();
+						updateStatus("Connected to broadcast", "#4CAF50");
+
+						playButton.disabled = true;
+						stopButton.disabled = false;
 					};
 
 					ws = new WebSocket("ws://147.182.138.79:8080/view");
 
 					ws.onopen = async () => {
 						console.log("WebSocket connected");
-						try {
-							const offer = await pc.createOffer({
-								offerToReceiveAudio: true,
-								offerToReceiveVideo: false,
-							});
+						const offer = await pc.createOffer({
+							offerToReceiveAudio: true,
+							offerToReceiveVideo: false,
+						});
 
-							await pc.setLocalDescription(offer);
-							ws.send(
-								JSON.stringify({
-									type: "offer",
-									sdp: offer.sdp,
-								})
-							);
-						} catch (err) {
-							console.error("Error in offer creation:", err);
-						}
+						await pc.setLocalDescription(offer);
+						ws.send(
+							JSON.stringify({
+								type: "offer",
+								sdp: offer.sdp,
+							})
+						);
+					};
+
+					ws.onclose = () => {
+						console.log("WebSocket closed");
+						updateStatus("Disconnected", "red");
+						cleanup();
 					};
 
 					ws.onmessage = async (e) => {
 						try {
 							const msg = JSON.parse(e.data);
-							console.log("Received message type:", msg.type);
+							console.log("Received message:", msg.type);
 
 							if (msg.type === "answer") {
 								await pc.setRemoteDescription(
@@ -200,12 +170,13 @@
 									})
 								);
 							}
-						} catch (err) {
-							console.error("Error handling message:", err);
+						} catch (error) {
+							console.error("Error handling message:", error);
 						}
 					};
 				} catch (err) {
 					console.error("Error:", err);
+					updateStatus("Error: " + err.message, "red");
 					cleanup();
 				}
 			}
@@ -213,35 +184,39 @@
 			function cleanup() {
 				if (pc) {
 					pc.close();
-					pc = null;
 				}
 				if (ws) {
 					ws.close();
-					ws = null;
 				}
+				if (audioContext) {
+					audioContext.close();
+				}
+				if (animationFrame) {
+					cancelAnimationFrame(animationFrame);
+				}
+
+				pc = null;
+				ws = null;
+				audioContext = null;
+				analyser = null;
+				animationFrame = null;
+				audio.srcObject = null;
+
+				playButton.disabled = false;
+				stopButton.disabled = true;
+				volumeLevel.style.width = "0%";
+				updateStatus("Waiting for broadcast...");
 			}
 
 			// Button handlers
-			playButton.addEventListener("click", () => {
-				if (sound) {
-					sound.play();
-				}
-			});
-
-			stopButton.addEventListener("click", () => {
-				if (sound) {
-					sound.pause();
-				}
-			});
-
+			playButton.addEventListener("click", connectToStream);
+			stopButton.addEventListener("click", cleanup);
 			muteButton.addEventListener("click", () => {
-				if (sound) {
-					sound.mute(!sound.mute());
-					muteButton.textContent = sound.mute() ? "Unmute" : "Mute";
-				}
+				audio.muted = !audio.muted;
+				muteButton.textContent = audio.muted ? "Unmute" : "Mute";
 			});
 
-			// Start checking for broadcast
+			// Check broadcast status periodically
 			async function checkBroadcastStatus() {
 				try {
 					const response = await fetch("/broadcast-status");
@@ -259,6 +234,7 @@
 				}
 			}
 
+			// Start checking for broadcast
 			checkBroadcastStatus();
 			setInterval(checkBroadcastStatus, 2000);
 

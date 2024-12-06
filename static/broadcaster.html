@@ -7,18 +7,10 @@
 				max-width: 800px;
 				margin: 0 auto;
 				padding: 20px;
-			}
-			video {
-				width: 100%;
-				background: #000;
-				border-radius: 8px;
+				text-align: center;
 			}
 			.controls {
-				margin-top: 20px;
-				padding: 15px;
-				background: #fff;
-				border-radius: 8px;
-				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+				margin: 20px 0;
 			}
 			button {
 				padding: 10px 20px;
@@ -33,22 +25,17 @@
 				background: #ccc;
 			}
 			.status {
-				margin-left: 10px;
-				display: inline-block;
-			}
-			.stream-key {
-				margin-bottom: 20px;
-				padding: 15px;
-				background: #fff;
-				border-radius: 8px;
-				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+				margin: 20px 0;
+				padding: 10px;
+				border-radius: 4px;
+				background: #f5f5f5;
 			}
 			.volume-meter {
-				margin: 20px auto;
 				width: 300px;
 				height: 20px;
 				background: #f0f0f0;
 				border-radius: 10px;
+				margin: 20px auto;
 				overflow: hidden;
 			}
 			.volume-level {
@@ -61,17 +48,12 @@
 	</head>
 	<body>
 		<div class="container">
-			<div class="stream-key">
-				<h3>Stream Key</h3>
-				<p>Your stream key: <strong>your-stream-key</strong></p>
-			</div>
-
+			<h2>Audio Broadcaster</h2>
 			<div class="controls">
-				<button id="startButton">Start Broadcasting Audio</button>
+				<button id="startButton">Start Broadcasting</button>
 				<button id="stopButton" disabled>Stop Broadcasting</button>
-				<span id="status" class="status">Disconnected</span>
 			</div>
-
+			<div id="status" class="status">Ready to broadcast</div>
 			<div class="volume-meter">
 				<div id="volumeLevel" class="volume-level"></div>
 			</div>
@@ -80,15 +62,14 @@
 		<script>
 			const startButton = document.getElementById("startButton");
 			const stopButton = document.getElementById("stopButton");
-			const statusElement = document.getElementById("status");
+			const status = document.getElementById("status");
 			const volumeLevel = document.getElementById("volumeLevel");
 
 			let pc = null;
 			let ws = null;
 			let stream = null;
 			let audioContext = null;
-			let audioAnalyser = null;
-			let dataArray = null;
+			let analyser = null;
 			let animationFrame = null;
 
 			const config = {
@@ -97,51 +78,29 @@
 
 			function updateStatus(message, color = "black") {
 				console.log("Status:", message);
-				statusElement.textContent = message;
-				statusElement.style.color = color;
+				status.textContent = message;
+				status.style.color = color;
 			}
 
-			function setupAudioAnalyser(stream) {
-				if (!audioContext) {
-					audioContext = new (window.AudioContext ||
-						window.webkitAudioContext)();
-				}
+			function updateVolumeMeter() {
+				if (!analyser) return;
 
-				const source = audioContext.createMediaStreamSource(stream);
-				audioAnalyser = audioContext.createAnalyser();
-				audioAnalyser.fftSize = 256;
-				source.connect(audioAnalyser);
-
-				dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
-				animateVolumeMeter();
-			}
-
-			function animateVolumeMeter() {
-				if (!audioAnalyser || !dataArray) return;
-
-				audioAnalyser.getByteFrequencyData(dataArray);
+				const dataArray = new Uint8Array(analyser.frequencyBinCount);
+				analyser.getByteFrequencyData(dataArray);
 				const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
 				const volume = Math.min(100, Math.round((average / 255) * 100));
 
 				volumeLevel.style.width = volume + "%";
 				volumeLevel.style.backgroundColor = volume > 50 ? "#ff4444" : "#4caf50";
 
-				animationFrame = requestAnimationFrame(animateVolumeMeter);
+				animationFrame = requestAnimationFrame(updateVolumeMeter);
 			}
 
 			async function startBroadcast() {
 				try {
+					// Create peer connection
 					pc = new RTCPeerConnection(config);
-					console.log("Created peer connection:", pc);
-
-					// Add logging for ICE connection state changes
-					pc.oniceconnectionstatechange = () => {
-						console.log("ICE Connection State:", pc.iceConnectionState);
-					};
-
-					pc.onconnectionstatechange = () => {
-						console.log("Connection State:", pc.connectionState);
-					};
+					console.log("Created peer connection");
 
 					// Get audio stream
 					stream = await navigator.mediaDevices.getUserMedia({
@@ -149,29 +108,32 @@
 							echoCancellation: true,
 							noiseSuppression: true,
 							autoGainControl: true,
-							sampleRate: 48000,
 						},
 						video: false,
 					});
 
 					// Setup volume meter
-					setupAudioAnalyser(stream);
+					audioContext = new (window.AudioContext ||
+						window.webkitAudioContext)();
+					const source = audioContext.createMediaStreamSource(stream);
+					analyser = audioContext.createAnalyser();
+					analyser.fftSize = 256;
+					source.connect(analyser);
 
-					// Add tracks to peer connection
+					// Add track to peer connection
 					stream.getTracks().forEach((track) => {
-						const sender = pc.addTrack(track, stream);
-						console.log("Added track to peer connection:", track.kind, sender);
+						pc.addTrack(track, stream);
+						console.log("Added track:", track.kind);
 					});
 
 					// Create WebSocket connection
 					ws = new WebSocket("ws://147.182.138.79:8080/broadcast");
 
 					ws.onopen = async () => {
-						console.log("WebSocket connected, creating offer");
+						console.log("WebSocket connected");
 						try {
 							const offer = await pc.createOffer();
 							await pc.setLocalDescription(offer);
-							console.log("Local description set:", offer);
 
 							ws.send(
 								JSON.stringify({
@@ -180,9 +142,9 @@
 									streamKey: "your-secret-stream-key",
 								})
 							);
-							console.log("Sent offer to server");
 						} catch (err) {
-							console.error("Error during offer creation:", err);
+							console.error("Error creating offer:", err);
+							updateStatus("Error: " + err.message, "red");
 						}
 					};
 
@@ -209,23 +171,23 @@
 										sdp: msg.sdp,
 									})
 								);
-								console.log("Remote description set");
-								updateStatus("Broadcasting Audio", "green");
-							} else if (msg.type === "candidate" && msg.candidate) {
-								await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-								console.log("Added ICE candidate");
+								updateStatus("Broadcasting", "#4CAF50");
 							}
 						} catch (error) {
 							console.error("Error handling message:", error);
 						}
 					};
 
+					// Start volume meter
+					updateVolumeMeter();
+
+					// Update UI
 					startButton.disabled = true;
 					stopButton.disabled = false;
-					updateStatus("Starting broadcast...", "orange");
+					updateStatus("Connecting...", "#FFA500");
 				} catch (err) {
 					console.error("Error:", err);
-					updateStatus("Error: " + err.message, "#f44336");
+					updateStatus("Error: " + err.message, "red");
 					stopBroadcast();
 				}
 			}
@@ -251,14 +213,13 @@
 				ws = null;
 				stream = null;
 				audioContext = null;
-				audioAnalyser = null;
-				dataArray = null;
+				analyser = null;
 				animationFrame = null;
 
 				startButton.disabled = false;
 				stopButton.disabled = true;
 				volumeLevel.style.width = "0%";
-				updateStatus("Disconnected");
+				updateStatus("Ready to broadcast");
 			}
 
 			startButton.addEventListener("click", startBroadcast);
