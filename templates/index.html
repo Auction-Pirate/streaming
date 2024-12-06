@@ -53,18 +53,27 @@
 
 			async function startBroadcast() {
 			    try {
-			        // Request access to media devices
+			        // Check if mediaDevices is supported
+			        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+			            throw new Error('Your browser does not support media devices. Please use a modern browser.');
+			        }
+
+			        // Request access to media devices with constraints
 			        stream = await navigator.mediaDevices.getUserMedia({
 			            video: {
 			                width: { ideal: 1280 },
 			                height: { ideal: 720 }
 			            },
 			            audio: true
+			        }).catch(err => {
+			            throw new Error('Failed to access camera/microphone: ' + err.message);
 			        });
 
 			        // Display the stream in the video element
 			        videoElement.srcObject = stream;
-			        await videoElement.play();
+			        await videoElement.play().catch(err => {
+			            throw new Error('Failed to play video: ' + err.message);
+			        });
 
 			        // Create WebRTC peer connection
 			        pc = new RTCPeerConnection(config);
@@ -120,6 +129,7 @@
 			    } catch (err) {
 			        console.error('Error:', err);
 			        updateStatus('Error: ' + err.message, '#f44336');
+			        stopBroadcast(); // Clean up any partial setup
 			    }
 			}
 
