@@ -234,12 +234,10 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Set the remote description
-			offer := webrtc.SessionDescription{}
-			if err := json.Unmarshal([]byte(msg.Data), &offer); err != nil {
-				viewersLock.Unlock()
-				log.Printf("Failed to parse offer: %v", err)
-				return
+			// Set the remote description - directly use the SDP string
+			offer := webrtc.SessionDescription{
+				Type: webrtc.SDPTypeOffer,
+				SDP:  msg.Data,
 			}
 
 			if err := viewers[viewerID].SetRemoteDescription(offer); err != nil {
