@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>WebRTC Broadcaster</title>
+		<style>
+			.container {
+				max-width: 800px;
+				margin: 0 auto;
+				padding: 20px;
+			}
+			video {
+				width: 100%;
+				background: #000;
+				border-radius: 8px;
+			}
+			.controls {
+				margin-top: 20px;
+				padding: 15px;
+				background: #fff;
+				border-radius: 8px;
+				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+			}
+			button {
+				padding: 10px 20px;
+				font-size: 16px;
+				border: none;
+				border-radius: 4px;
+				background: #2196f3;
+				color: white;
+				cursor: pointer;
+			}
+			button:disabled {
+				background: #ccc;
+			}
+			.status {
+				margin-left: 10px;
+				display: inline-block;
+			}
+			.stream-key {
+				margin-bottom: 20px;
+				padding: 15px;
+				background: #fff;
+				border-radius: 8px;
+				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<div class="stream-key">
+				<h3>Stream Key</h3>
+				<p>Your stream key: <strong>your-stream-key</strong></p>
+			</div>
+
+			<video id="video" autoplay playsinline muted></video>
+
+			<div class="controls">
+				<button id="startButton">Start Broadcasting</button>
+				<button id="stopButton" disabled>Stop Broadcasting</button>
+				<span id="status" class="status">Disconnected</span>
+			</div>
+		</div>
+
+		<script>
+			const video = document.getElementById("video");
+			const startButton = document.getElementById("startButton");
+			const stopButton = document.getElementById("stopButton");
+			const statusElement = document.getElementById("status");
+
+			let pc = null;
+			let ws = null;
+			let stream = null;
+
+			const config = {
+				iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+			};
+
+			function updateStatus(message, color = "black") {
+				console.log("Status:", message);
+				statusElement.textContent = message;
+				statusElement.style.color = color;
+			}
+
+			async function startBroadcast() {
+				try {
+					// Get user media
+					stream = await navigator.mediaDevices.getUserMedia({
+						video: true,
+						audio: true,
+					});
+
+					// Show stream in video element
+					video.srcObject = stream;
+
+					// Create peer connection
+					pc = new RTCPeerConnection(config);
+
+					// Add tracks
+					stream.getTracks().forEach((track) => {
+						pc.addTrack(track, stream);
+					});
+
+					// Create offer
+					const offer = await pc.createOffer();
+					await pc.setLocalDescription(offer);
+
+					// Connect to WebSocket
+					ws = new WebSocket("ws://147.182.138.79:8080/broadcast");
+
+					ws.onopen = () => {
+						console.log("WebSocket connected");
+						updateStatus("Connected");
+
+						ws.send(
+							JSON.stringify({
+								type: "offer",
+								sdp: offer.sdp,
+								streamKey: "your-stream-key",
+							})
+						);
+					};
+
+					ws.onclose = () => {
+						console.log("WebSocket closed");
+						updateStatus("Disconnected", "red");
+					};
+
+					ws.onerror = (error) => {
+						console.error("WebSocket error:", error);
+						updateStatus("Connection error", "red");
+					};
+
+					ws.onmessage = async (e) => {
+						try {
+							const msg = JSON.parse(e.data);
+							if (msg.type === "answer") {
+								await pc.setRemoteDescription(
+									new RTCSessionDescription({
+										type: "answer",
+										sdp: msg.sdp,
+									})
+								);
+								updateStatus("Broadcasting", "green");
+							}
+						} catch (error) {
+							console.error("Error handling message:", error);
+						}
+					};
+
+					startButton.disabled = true;
+					stopButton.disabled = false;
+				} catch (error) {
+					console.error("Error:", error);
+					updateStatus("Error: " + error.message, "red");
+					stop();
+				}
+			}
+
+			function stop() {
+				if (stream) {
+					stream.getTracks().forEach((track) => track.stop());
+				}
+				if (pc) {
+					pc.close();
+				}
+				if (ws) {
+					ws.close();
+				}
+				video.srcObject = null;
+				startButton.disabled = false;
+				stopButton.disabled = true;
+				updateStatus("Disconnected");
+			}
+
+			startButton.addEventListener("click", startBroadcast);
+			stopButton.addEventListener("click", stop);
+		</script>
+	</body>
+</html>

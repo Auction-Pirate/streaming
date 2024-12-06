@@ -83,7 +83,17 @@ func main() {
 
 	// Web routes
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/index.html")
+		view := r.URL.Query().Get("view")
+		
+		switch view {
+		case "broadcaster":
+			http.ServeFile(w, r, "static/broadcaster.html")
+		case "viewer":
+			http.ServeFile(w, r, "static/viewer.html")
+		default:
+			// Redirect to viewer by default
+			http.Redirect(w, r, "/?view=viewer", http.StatusFound)
+		}
 	})
 
 	// Add this to your route handlers
@@ -222,5 +232,4 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 }
 
 func generateViewerID() string {
-	return "viewer-" + string(os.Getpid())
-} 
+	return "viewer-" + string(os.Getpid()) 
