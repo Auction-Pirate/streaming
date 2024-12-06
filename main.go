@@ -206,35 +206,33 @@ func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
 
 	// Handle incoming tracks
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		log.Printf("Got remote track from broadcaster: %v, kind: %v", remoteTrack.ID(), remoteTrack.Kind())
+		log.Printf("Got remote track: %v", remoteTrack.ID())
 		
-		// Create a local track to forward to viewers
+		// Create a local track
 		localTrack, err := webrtc.NewTrackLocalStaticRTP(
 			remoteTrack.Codec().RTPCodecCapability,
-			"audio", // Fixed ID for audio track
-			"audio", // Fixed stream ID
+			remoteTrack.ID(),
+			remoteTrack.StreamID(),
 		)
 		if err != nil {
 			log.Printf("Failed to create local track: %v", err)
 			return
 		}
 		b.StreamTracks = append(b.StreamTracks, localTrack)
-		log.Printf("Created local track for forwarding: %v", localTrack.ID())
 
-		// Forward RTP packets from broadcaster to all viewers
+		// Forward RTP packets to all viewers
 		go func() {
 			for {
 				packet, _, err := remoteTrack.ReadRTP()
 				if err != nil {
-					log.Printf("Failed to read RTP packet: %v", err)
 					return
 				}
 
 				viewersMutex.RLock()
-				for id, viewer := range viewers {
-					if len(viewer.StreamTracks) > 0 {
-						if err := viewer.StreamTracks[0].WriteRTP(packet); err != nil {
-							log.Printf("Failed to write RTP to viewer %s: %v", id, err)
+				for _, viewer := range viewers {
+					for _, track := range viewer.StreamTracks {
+						if err := track.WriteRTP(packet); err != nil {
+							log.Printf("Failed to write RTP: %v", err)
 						}
 					}
 				}
@@ -345,29 +343,13 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 
 	// Add broadcaster tracks to viewer if broadcaster exists
 	if broadcaster != nil {
-		log.Printf("Adding %d tracks from broadcaster to viewer %s", 
-			len(broadcaster.StreamTracks), viewerID)
-		
+		log.Printf("Adding broadcaster tracks to viewer")
 		for _, track := range broadcaster.StreamTracks {
-			rtpSender, err := pc.AddTrack(track)
-			if err != nil {
-				log.Printf("Failed to add track to viewer %s: %v", viewerID, err)
+			if _, err := pc.AddTrack(track); err != nil {
+				log.Printf("Failed to add track: %v", err)
 				continue
 			}
-			log.Printf("Added track %s to viewer %s", track.ID(), viewerID)
-
-			// Handle RTP packets
-			go func() {
-				rtcpBuf := make([]byte, 1500)
-				for {
-					if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
-						return
-					}
-				}
-			}()
 		}
-	} else {
-		log.Printf("No broadcaster present for viewer %s", viewerID)
 	}
 
 	// Handle incoming messages

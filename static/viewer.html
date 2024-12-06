@@ -131,51 +131,38 @@
 
 					pc.ontrack = (event) => {
 						console.log("Received track:", event.track.kind);
-						if (event.track.kind === "audio") {
-							// Create audio element dynamically
-							const audio = document.createElement("audio");
-							audio.autoplay = true;
-							document.body.appendChild(audio);
+						console.log("Track settings:", event.track.getSettings());
 
-							// Create MediaStream and connect it
-							const stream = new MediaStream([event.track]);
-							audio.srcObject = stream;
+						const audio = document.createElement("audio");
+						audio.autoplay = true;
+						audio.controls = true;
+						document.body.appendChild(audio);
 
-							// Create audio context for volume meter
-							const audioContext = new (window.AudioContext ||
-								window.webkitAudioContext)();
-							const source = audioContext.createMediaStreamSource(stream);
-							const analyser = audioContext.createAnalyser();
-							analyser.fftSize = 256;
+						const stream = new MediaStream([event.track]);
+						audio.srcObject = stream;
 
-							// Connect to both analyzer and destination
-							source.connect(analyser);
-							source.connect(audioContext.destination);
+						// Log when audio starts playing
+						audio.onplay = () => console.log("Audio started playing");
+						audio.onpause = () => console.log("Audio paused");
+						audio.onerror = (e) => console.error("Audio error:", e);
 
-							// Update volume meter
-							const dataArray = new Uint8Array(analyser.frequencyBinCount);
-							function updateMeter() {
-								analyser.getByteFrequencyData(dataArray);
-								const average =
-									dataArray.reduce((a, b) => a + b) / dataArray.length;
-								const volume = Math.min(100, Math.round((average / 255) * 100));
-								volumeLevel.style.width = volume + "%";
-								requestAnimationFrame(updateMeter);
-							}
-							updateMeter();
+						// Monitor audio levels
+						const audioContext = new (window.AudioContext ||
+							window.webkitAudioContext)();
+						const source = audioContext.createMediaStreamSource(stream);
+						const analyser = audioContext.createAnalyser();
+						source.connect(analyser);
+						source.connect(audioContext.destination);
 
-							// Log audio states
-							setInterval(() => {
-								console.log("Audio state:", {
-									readyState: audio.readyState,
-									paused: audio.paused,
-									currentTime: audio.currentTime,
-									trackState: event.track.readyState,
-									trackEnabled: event.track.enabled,
-									streamActive: stream.active,
-								});
-							}, 1000);
+						const dataArray = new Uint8Array(analyser.frequencyBinCount);
+						function updateVolume() {
+							analyser.getByteFrequencyData(dataArray);
+							const average =
+								dataArray.reduce((a, b) => a + b) / dataArray.length;
+							console.log("Audio level:", average);
+							requestAnimationFrame(updateVolume);
 						}
+						updateVolume();
 					};
 
 					ws = new WebSocket("ws://147.182.138.79:8080/view");
