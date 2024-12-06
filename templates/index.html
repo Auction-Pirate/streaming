@@ -4,6 +4,7 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>{{if .IsBroadcaster}}Broadcast{{else}}View{{end}} Stream</title>
+		<link href="https://vjs.zencdn.net/8.6.1/video-js.css" rel="stylesheet" />
 		<style>
 			body {
 				margin: 0;
@@ -23,14 +24,50 @@
 				margin-bottom: 20px;
 				aspect-ratio: 16/9;
 			}
-			video {
+			.video-js {
 				width: 100%;
 				height: 100%;
-				object-fit: cover;
-				background: #000;
-				transform: scaleX(-1); /* Mirror the video for selfie view */
+				border-radius: 8px;
 			}
-			/* ... rest of your styles ... */
+			.video-js.vjs-playing .vjs-tech {
+				pointer-events: none;
+			}
+			.controls {
+				padding: 15px;
+				background: #fff;
+				border-radius: 8px;
+				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+			}
+			button {
+				padding: 10px 20px;
+				font-size: 16px;
+				border: none;
+				border-radius: 4px;
+				background: #2196f3;
+				color: white;
+				cursor: pointer;
+				margin-right: 10px;
+			}
+			button:hover {
+				background: #1976d2;
+			}
+			button:disabled {
+				background: #ccc;
+				cursor: not-allowed;
+			}
+			.status {
+				display: inline-block;
+				padding: 8px 12px;
+				border-radius: 4px;
+				margin-left: 10px;
+			}
+			.stream-key {
+				margin-bottom: 20px;
+				padding: 15px;
+				background: #fff;
+				border-radius: 8px;
+				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+			}
 		</style>
 	</head>
 	<body>
@@ -45,12 +82,16 @@
 			<div class="video-container">
 				<video
 					id="video"
+					class="video-js vjs-default-skin vjs-big-play-button vjs-fluid"
 					playsinline
-					autoplay
-					muted
-					controls
-					style="width: 100%; height: 100%"
-				></video>
+					{{if
+					.IsBroadcaster}}muted{{end}}
+				>
+					<p class="vjs-no-js">
+						To view this video please enable JavaScript, and consider upgrading
+						to a web browser that supports HTML5 video
+					</p>
+				</video>
 			</div>
 
 			<div class="controls">
@@ -62,7 +103,10 @@
 			</div>
 		</div>
 
+		<script src="https://vjs.zencdn.net/8.6.1/video.min.js"></script>
+
 		<script>
+			let player;
 			const config = {
 			    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 			};
@@ -71,7 +115,21 @@
 			let ws = null;
 			let stream = null;
 
-			const videoElement = document.getElementById('video');
+			player = videojs('video', {
+			    controls: true,
+			    autoplay: {{if .IsBroadcaster}}false{{else}}true{{end}},
+			    fluid: true,
+			    playsinline: true,
+			    liveui: true,
+			    responsive: true,
+			    controlBar: {
+			        playToggle: {{if .IsBroadcaster}}false{{else}}true{{end}},
+			        volumePanel: { inline: false },
+			        pictureInPictureToggle: true,
+			        fullscreenToggle: true,
+			    }
+			});
+
 			const statusElement = document.getElementById('status');
 			{{if .IsBroadcaster}}
 			const startButton = document.getElementById('startButton');
@@ -82,29 +140,6 @@
 			        // Create WebRTC peer connection first
 			        pc = new RTCPeerConnection(config);
 			        console.log('Created peer connection:', pc);
-
-			        // Set up track event handlers before getting media
-			        pc.ontrack = (event) => {
-			            console.log('Received track:', event.track);
-			            if (videoElement.srcObject !== event.streams[0]) {
-			                videoElement.srcObject = event.streams[0];
-			            }
-			        };
-
-			        pc.onicecandidate = event => {
-			            if (event.candidate) {
-			                console.log("New ICE candidate:", event.candidate);
-			            }
-			        };
-
-			        pc.oniceconnectionstatechange = () => {
-			            console.log('ICE Connection State:', pc.iceConnectionState);
-			            updateStatus(`ICE Connection: ${pc.iceConnectionState}`);
-			        };
-
-			        pc.onconnectionstatechange = () => {
-			            console.log('Connection State:', pc.connectionState);
-			        };
 
 			        // Get media stream
 			        stream = await navigator.mediaDevices.getUserMedia({
@@ -121,20 +156,9 @@
 			            }
 			        });
 
-			        console.log('Got media stream:', stream);
-			        console.log('Video tracks:', stream.getVideoTracks());
-			        console.log('Audio tracks:', stream.getAudioTracks());
-
-			        // Display stream in video element
-			        videoElement.srcObject = stream;
-			        videoElement.muted = true;
-
-			        try {
-			            await videoElement.play();
-			            console.log('Local video playing');
-			        } catch (err) {
-			            console.error('Error playing local video:', err);
-			        }
+			        // Set up Video.js source
+			        player.srcObject = stream;
+			        await player.play();
 
 			        // Add tracks to peer connection
 			        stream.getTracks().forEach(track => {
@@ -198,10 +222,8 @@
 			function stopBroadcast() {
 			    console.log('Stopping broadcast');
 			    if (stream) {
-			        stream.getTracks().forEach(track => {
-			            track.stop();
-			            console.log(`Stopped ${track.kind} track`);
-			        });
+			        stream.getTracks().forEach(track => track.stop());
+			        console.log(`Stopped ${track.kind} track`);
 			    }
 			    if (pc) {
 			        pc.close();
@@ -211,7 +233,7 @@
 			        ws.close();
 			        console.log('Closed WebSocket');
 			    }
-			    videoElement.srcObject = null;
+			    player.reset();
 			    startButton.disabled = false;
 			    stopButton.disabled = true;
 			    updateStatus('Disconnected');
@@ -227,9 +249,7 @@
 			        ws = new WebSocket('ws://147.182.138.79:8080/view');
 
 			        pc.ontrack = (event) => {
-			            if (videoElement.srcObject !== event.streams[0]) {
-			                videoElement.srcObject = event.streams[0];
-			            }
+			            player.srcObject = event.streams[0];
 			        };
 
 			        pc.oniceconnectionstatechange = () => {
@@ -278,6 +298,13 @@
 			    statusElement.textContent = status;
 			    statusElement.style.color = color;
 			}
+
+			// Clean up Video.js on page unload
+			window.onbeforeunload = function() {
+			    if (player) {
+			        player.dispose();
+			    }
+			};
 		</script>
 	</body>
 </html>
