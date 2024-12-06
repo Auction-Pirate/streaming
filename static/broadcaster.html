@@ -83,41 +83,54 @@
 
 			async function startBroadcast() {
 				try {
-					// Get user media
+					// Create WebRTC peer connection first
+					pc = new RTCPeerConnection(config);
+					console.log("Created peer connection:", pc);
+
+					// Get media stream
 					stream = await navigator.mediaDevices.getUserMedia({
-						video: true,
-						audio: true,
+						video: {
+							width: 1280,
+							height: 720,
+							frameRate: 30,
+							facingMode: "user",
+						},
+						audio: {
+							echoCancellation: true,
+							noiseSuppression: true,
+							sampleRate: 44100,
+						},
 					});
 
 					// Show stream in video element
 					video.srcObject = stream;
-
-					// Create peer connection
-					pc = new RTCPeerConnection(config);
 
 					// Add tracks
 					stream.getTracks().forEach((track) => {
 						pc.addTrack(track, stream);
 					});
 
-					// Create offer
-					const offer = await pc.createOffer();
-					await pc.setLocalDescription(offer);
-
-					// Connect to WebSocket
+					// Create WebSocket connection
 					ws = new WebSocket("ws://147.182.138.79:8080/broadcast");
 
-					ws.onopen = () => {
-						console.log("WebSocket connected");
-						updateStatus("Connected");
+					ws.onopen = async () => {
+						console.log("WebSocket connected, creating offer");
+						try {
+							const offer = await pc.createOffer();
+							await pc.setLocalDescription(offer);
 
-						ws.send(
-							JSON.stringify({
-								type: "offer",
-								sdp: offer.sdp,
-								streamKey: "your-stream-key",
-							})
-						);
+							// Send offer with the correct stream key
+							ws.send(
+								JSON.stringify({
+									type: "offer",
+									sdp: offer.sdp,
+									streamKey: "your-secret-stream-key", // Make sure this matches your .env file
+								})
+							);
+							console.log("Sent offer to server");
+						} catch (err) {
+							console.error("Error during offer creation:", err);
+						}
 					};
 
 					ws.onclose = () => {
@@ -149,10 +162,10 @@
 
 					startButton.disabled = true;
 					stopButton.disabled = false;
-				} catch (error) {
-					console.error("Error:", error);
-					updateStatus("Error: " + error.message, "red");
-					stop();
+				} catch (err) {
+					console.error("Error:", err);
+					updateStatus("Error: " + err.message, "#f44336");
+					stopBroadcast();
 				}
 			}
 

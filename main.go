@@ -253,9 +253,10 @@ func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
 
 		switch message.Type {
 		case "offer":
-			// Verify stream key
-			if message.StreamKey != os.Getenv("STREAM_KEY") {
-				log.Println("Invalid stream key")
+			// Verify stream key with better logging
+			expectedKey := os.Getenv("STREAM_KEY")
+			if message.StreamKey != expectedKey {
+				log.Printf("Invalid stream key. Expected: %s, Got: %s", expectedKey, message.StreamKey)
 				return
 			}
 
