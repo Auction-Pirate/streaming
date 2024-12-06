@@ -26,12 +26,55 @@
 			.audio-indicator.active {
 				background-color: #4caf50;
 			}
+			.controls {
+				margin: 20px 0;
+				padding: 15px;
+				background: #fff;
+				border-radius: 8px;
+				box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+				text-align: center;
+			}
+			button {
+				padding: 10px 20px;
+				margin: 0 5px;
+				font-size: 16px;
+				border: none;
+				border-radius: 4px;
+				background: #2196f3;
+				color: white;
+				cursor: pointer;
+			}
+			button:disabled {
+				background: #ccc;
+			}
+			.volume-meter {
+				margin: 20px auto;
+				width: 300px;
+				height: 20px;
+				background: #f0f0f0;
+				border-radius: 10px;
+				overflow: hidden;
+			}
+			.volume-level {
+				width: 0%;
+				height: 100%;
+				background: #4caf50;
+				transition: width 0.1s;
+			}
 		</style>
 	</head>
 	<body>
 		<div class="container">
 			<div id="audioIndicator" class="audio-indicator"></div>
 			<div id="status" class="status">Waiting for broadcast...</div>
+			<div class="controls">
+				<button id="playButton">Play</button>
+				<button id="stopButton">Stop</button>
+				<button id="muteButton">Mute</button>
+			</div>
+			<div class="volume-meter">
+				<div id="volumeLevel" class="volume-level"></div>
+			</div>
 			<audio id="audio" autoplay></audio>
 		</div>
 
@@ -41,6 +84,14 @@
 			const audioIndicator = document.getElementById("audioIndicator");
 			let pc = null;
 			let ws = null;
+			let audioContext = null;
+			let audioAnalyser = null;
+			let dataArray = null;
+			let animationFrame = null;
+			const playButton = document.getElementById("playButton");
+			const stopButton = document.getElementById("stopButton");
+			const muteButton = document.getElementById("muteButton");
+			const volumeLevel = document.getElementById("volumeLevel");
 
 			const config = {
 				iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -99,9 +150,15 @@
 						if (event.track.kind === "audio") {
 							const audioStream = new MediaStream([event.track]);
 							audio.srcObject = audioStream;
+
+							setupAudioAnalyser(audioStream);
+
 							audio
 								.play()
-								.then(() => console.log("Audio playing successfully"))
+								.then(() => {
+									console.log("Audio playing successfully");
+									updatePlaybackState();
+								})
 								.catch((err) => console.error("Error playing audio:", err));
 							updateStatus("Receiving audio", "#4CAF50");
 						}
@@ -194,8 +251,18 @@
 					ws.close();
 					ws = null;
 				}
+				if (audioContext) {
+					audioContext.close();
+					audioContext = null;
+				}
+				if (animationFrame) {
+					cancelAnimationFrame(animationFrame);
+					animationFrame = null;
+				}
 				audio.srcObject = null;
 				audioIndicator.classList.remove("active");
+				volumeLevel.style.width = "0%";
+				updatePlaybackState();
 			}
 
 			async function checkBroadcastStatus() {
@@ -215,6 +282,58 @@
 				} catch (err) {
 					console.error("Error checking broadcast status:", err);
 				}
+			}
+
+			playButton.addEventListener("click", () => {
+				audio.play();
+				updatePlaybackState();
+			});
+
+			stopButton.addEventListener("click", () => {
+				audio.pause();
+				updatePlaybackState();
+			});
+
+			muteButton.addEventListener("click", () => {
+				audio.muted = !audio.muted;
+				muteButton.textContent = audio.muted ? "Unmute" : "Mute";
+			});
+
+			function updatePlaybackState() {
+				playButton.disabled = !audio.paused;
+				stopButton.disabled = audio.paused;
+			}
+
+			function setupAudioAnalyser(stream) {
+				if (!audioContext) {
+					audioContext = new (window.AudioContext ||
+						window.webkitAudioContext)();
+				}
+
+				// Create audio source from stream
+				const source = audioContext.createMediaStreamSource(stream);
+				audioAnalyser = audioContext.createAnalyser();
+				audioAnalyser.fftSize = 256;
+				source.connect(audioAnalyser);
+
+				// Create data array for volume levels
+				dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+
+				// Start animation
+				animateVolumeMeter();
+			}
+
+			function animateVolumeMeter() {
+				if (!audioAnalyser || !dataArray) return;
+
+				audioAnalyser.getByteFrequencyData(dataArray);
+				const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+				const volume = Math.min(100, Math.round((average / 255) * 100));
+
+				volumeLevel.style.width = volume + "%";
+				volumeLevel.style.backgroundColor = volume > 50 ? "#ff4444" : "#4caf50";
+
+				animationFrame = requestAnimationFrame(animateVolumeMeter);
 			}
 
 			// Start checking for broadcast immediately
