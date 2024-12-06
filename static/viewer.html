@@ -95,10 +95,9 @@
 					pc = new RTCPeerConnection(config);
 					console.log("Created peer connection");
 
-					pc.ontrack = (event) => {
-						console.log("Received track:", event.track.kind);
-						if (event.track.kind === "audio") {
-							audio.srcObject = new MediaStream([event.track]);
+					pc.onicecandidate = (event) => {
+						if (event.candidate) {
+							console.log("New ICE candidate:", event.candidate);
 						}
 					};
 
@@ -111,22 +110,41 @@
 						}
 					};
 
+					pc.ontrack = (event) => {
+						console.log("Received track:", event.track.kind);
+						const audioStream = new MediaStream([event.track]);
+						audio.srcObject = audioStream;
+						audio
+							.play()
+							.catch((err) => console.error("Error playing audio:", err));
+						updateStatus("Receiving audio", "#4CAF50");
+					};
+
 					ws = new WebSocket("ws://147.182.138.79:8080/view");
 
 					ws.onopen = async () => {
 						console.log("WebSocket connected");
-						const offer = await pc.createOffer({
-							offerToReceiveAudio: true,
-							offerToReceiveVideo: false,
-						});
-						await pc.setLocalDescription(offer);
+						try {
+							const offer = await pc.createOffer({
+								offerToReceiveAudio: true,
+								offerToReceiveVideo: false,
+								voiceActivityDetection: true,
+							});
 
-						ws.send(
-							JSON.stringify({
-								type: "offer",
-								data: offer.sdp,
-							})
-						);
+							console.log("Created offer:", offer);
+							await pc.setLocalDescription(offer);
+							console.log("Set local description");
+
+							ws.send(
+								JSON.stringify({
+									type: "offer",
+									data: offer.sdp,
+								})
+							);
+							console.log("Sent offer to server");
+						} catch (err) {
+							console.error("Error in offer creation:", err);
+						}
 					};
 
 					ws.onclose = () => {
@@ -143,13 +161,14 @@
 					ws.onmessage = async (e) => {
 						try {
 							const msg = JSON.parse(e.data);
+							console.log("Received message:", msg);
 							if (msg.type === "answer") {
-								await pc.setRemoteDescription(
-									new RTCSessionDescription({
-										type: "answer",
-										sdp: msg.data,
-									})
-								);
+								const answer = new RTCSessionDescription({
+									type: "answer",
+									sdp: msg.data,
+								});
+								await pc.setRemoteDescription(answer);
+								console.log("Set remote description");
 								updateStatus("Connected to broadcast", "#4CAF50");
 							}
 						} catch (err) {
