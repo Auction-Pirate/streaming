@@ -41,18 +41,20 @@ func main() {
 		log.Printf("Warning: .env file not found")
 	}
 
-	// Serve static files
+	// Serve static files from the static directory
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
-	// WebSocket endpoints
-	http.HandleFunc("/ws/broadcast", HandleBroadcaster)
-	http.HandleFunc("/ws/view", HandleViewer)
-	
-	// Web routes
-	http.HandleFunc("/", HandleWeb)
+	// WebSocket endpoints - update these to match the client paths
+	http.HandleFunc("/broadcast", HandleBroadcaster)
+	http.HandleFunc("/view", HandleViewer)
 
-	port := os.Getenv("PORT")
+	// Web routes
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/index.html")
+	})
+
+	port := os.Getenv("WEBRTC_PORT")
 	if port == "" {
 		port = "8080"
 	}
