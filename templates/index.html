@@ -156,9 +156,28 @@
 			            }
 			        });
 
-			        // Set up Video.js source
-			        player.srcObject = stream;
-			        await player.play();
+			        console.log('Got media stream:', stream);
+
+			        // Set up Video.js with the stream
+			        if (player) {
+			            // Create a new MediaStream from the tracks
+			            const mediaStream = new MediaStream(stream.getTracks());
+
+			            // Create a video element for the stream
+			            const videoElement = document.createElement('video');
+			            videoElement.srcObject = mediaStream;
+			            videoElement.setAttribute('playsinline', '');
+
+			            // Set the video element as the source for Video.js
+			            player.tech().setSource({
+			                src: URL.createObjectURL(mediaStream),
+			                type: 'video/mp4'
+			            });
+
+			            player.play().catch(function(error) {
+			                console.log("Video play error:", error);
+			            });
+			        }
 
 			        // Add tracks to peer connection
 			        stream.getTracks().forEach(track => {
@@ -222,8 +241,10 @@
 			function stopBroadcast() {
 			    console.log('Stopping broadcast');
 			    if (stream) {
-			        stream.getTracks().forEach(track => track.stop());
-			        console.log(`Stopped ${track.kind} track`);
+			        stream.getTracks().forEach(track => {
+			            track.stop();
+			            console.log(`Stopped ${track.kind} track`);
+			        });
 			    }
 			    if (pc) {
 			        pc.close();
@@ -233,7 +254,10 @@
 			        ws.close();
 			        console.log('Closed WebSocket');
 			    }
-			    player.reset();
+			    if (player) {
+			        player.reset();
+			        player.src({ type: 'video/mp4', src: '' });
+			    }
 			    startButton.disabled = false;
 			    stopButton.disabled = true;
 			    updateStatus('Disconnected');
