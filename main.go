@@ -66,7 +66,7 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("Server starting on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Fatal(http.ListenAndServe("0.0.0.0:"+port, nil))
 }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {
