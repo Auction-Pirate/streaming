@@ -101,8 +101,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.Handle("/static/", http.StripPrefix("/static/", fs))
 
 	// WebSocket endpoints
-	mux.HandleFunc("/broadcast", logRequest(handleBroadcaster))
-	mux.HandleFunc("/view", logRequest(handleViewer))
+	mux.HandleFunc("/broadcast", logRequest(HandleBroadcaster))
+	mux.HandleFunc("/view", logRequest(HandleViewer))
 
 	// Web routes
 	mux.HandleFunc("/", handleRoot)
