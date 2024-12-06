@@ -56,38 +56,6 @@
 				);
 			}
 
-			async function checkBroadcastStatus() {
-				try {
-					const response = await fetch("/broadcast-status");
-					const data = await response.json();
-
-					if (data.broadcasting && !pc) {
-						console.log("Broadcast detected, connecting...");
-						updateStatus("Connecting to broadcast...", "#FFA500");
-						await connectToStream();
-					} else if (!data.broadcasting && pc) {
-						console.log("Broadcast ended");
-						cleanup();
-						updateStatus("Waiting for broadcast...", "#999");
-					}
-				} catch (err) {
-					console.error("Error checking broadcast status:", err);
-				}
-			}
-
-			function cleanup() {
-				if (pc) {
-					pc.close();
-					pc = null;
-				}
-				if (ws) {
-					ws.close();
-					ws = null;
-				}
-				audio.srcObject = null;
-				audioIndicator.classList.remove("active");
-			}
-
 			async function connectToStream() {
 				try {
 					cleanup();
@@ -98,6 +66,14 @@
 					pc.onicecandidate = (event) => {
 						if (event.candidate) {
 							console.log("New ICE candidate:", event.candidate);
+							if (ws && ws.readyState === WebSocket.OPEN) {
+								ws.send(
+									JSON.stringify({
+										type: "candidate",
+										candidate: event.candidate.toJSON(),
+									})
+								);
+							}
 						}
 					};
 
@@ -112,12 +88,14 @@
 
 					pc.ontrack = (event) => {
 						console.log("Received track:", event.track.kind);
-						const audioStream = new MediaStream([event.track]);
-						audio.srcObject = audioStream;
-						audio
-							.play()
-							.catch((err) => console.error("Error playing audio:", err));
-						updateStatus("Receiving audio", "#4CAF50");
+						if (event.track.kind === "audio") {
+							const audioStream = new MediaStream([event.track]);
+							audio.srcObject = audioStream;
+							audio
+								.play()
+								.catch((err) => console.error("Error playing audio:", err));
+							updateStatus("Receiving audio", "#4CAF50");
+						}
 					};
 
 					ws = new WebSocket("ws://147.182.138.79:8080/view");
@@ -129,6 +107,7 @@
 								offerToReceiveAudio: true,
 								offerToReceiveVideo: false,
 								voiceActivityDetection: true,
+								iceRestart: true,
 							});
 
 							console.log("Created offer:", offer);
@@ -161,15 +140,30 @@
 					ws.onmessage = async (e) => {
 						try {
 							const msg = JSON.parse(e.data);
-							console.log("Received message:", msg);
-							if (msg.type === "answer") {
-								const answer = new RTCSessionDescription({
-									type: "answer",
-									sdp: msg.data,
-								});
-								await pc.setRemoteDescription(answer);
-								console.log("Set remote description");
-								updateStatus("Connected to broadcast", "#4CAF50");
+							console.log("Received message type:", msg.type);
+
+							switch (msg.type) {
+								case "answer":
+									const answer = new RTCSessionDescription({
+										type: "answer",
+										sdp: msg.data,
+									});
+									await pc.setRemoteDescription(answer);
+									console.log("Set remote description");
+									break;
+
+								case "candidate":
+									if (msg.candidate) {
+										try {
+											await pc.addIceCandidate(
+												new RTCIceCandidate(msg.candidate)
+											);
+											console.log("Added ICE candidate");
+										} catch (err) {
+											console.error("Error adding ICE candidate:", err);
+										}
+									}
+									break;
 							}
 						} catch (err) {
 							console.error("Error handling message:", err);
@@ -179,6 +173,38 @@
 					console.error("Error connecting to stream:", err);
 					updateStatus("Error: " + err.message, "#F44336");
 					cleanup();
+				}
+			}
+
+			function cleanup() {
+				if (pc) {
+					pc.close();
+					pc = null;
+				}
+				if (ws) {
+					ws.close();
+					ws = null;
+				}
+				audio.srcObject = null;
+				audioIndicator.classList.remove("active");
+			}
+
+			async function checkBroadcastStatus() {
+				try {
+					const response = await fetch("/broadcast-status");
+					const data = await response.json();
+
+					if (data.broadcasting && !pc) {
+						console.log("Broadcast detected, connecting...");
+						updateStatus("Connecting to broadcast...", "#FFA500");
+						await connectToStream();
+					} else if (!data.broadcasting && pc) {
+						console.log("Broadcast ended");
+						cleanup();
+						updateStatus("Waiting for broadcast...", "#999");
+					}
+				} catch (err) {
+					console.error("Error checking broadcast status:", err);
 				}
 			}
 
