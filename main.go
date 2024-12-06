@@ -374,10 +374,17 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("Set remote description successfully")
 
-			// Create answer
-			answer, err := pc.CreateAnswer(&webrtc.AnswerOptions{
-				VoiceActivityDetection: true,
-			})
+			// Add broadcaster tracks to viewer if broadcaster exists
+			if broadcaster != nil {
+				for _, track := range broadcaster.StreamTracks {
+					if _, err := pc.AddTrack(track); err != nil {
+						log.Printf("Add track error: %v", err)
+					}
+				}
+			}
+
+			// Create answer without options
+			answer, err := pc.CreateAnswer(nil)
 			if err != nil {
 				log.Printf("Create answer error: %v", err)
 				continue
