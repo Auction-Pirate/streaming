@@ -62,7 +62,7 @@
 					await pc.setLocalDescription(offer);
 
 					// Connect to WebSocket
-					ws = new WebSocket("ws://localhost:8080/ws/broadcast");
+					ws = new WebSocket("ws://147.182.138.79:8080/ws/broadcast");
 
 					ws.onopen = () => {
 						ws.send(
