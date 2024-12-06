@@ -86,6 +86,16 @@ func main() {
 		http.ServeFile(w, r, "static/index.html")
 	})
 
+	// Add this to your route handlers
+	mux.HandleFunc("/broadcast-status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"broadcasting": broadcaster != nil,
+		})
+	})
+
 	// Wrap with CORS middleware
 	handler := corsMiddleware(mux)
 
