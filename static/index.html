@@ -11,97 +11,119 @@
 			video {
 				width: 100%;
 				background: #000;
+				border-radius: 8px;
 			}
-			.controls {
-				margin-top: 20px;
-			}
-			button {
-				padding: 10px 20px;
+			.status {
+				margin-top: 10px;
+				padding: 10px;
+				border-radius: 4px;
+				background: #f5f5f5;
+				text-align: center;
 			}
 		</style>
 	</head>
 	<body>
 		<div class="container">
 			<video id="video" autoplay playsinline></video>
-			<div class="controls">
-				<button id="startButton">Start</button>
-				<button id="stopButton" disabled>Stop</button>
-				<span id="status">Disconnected</span>
-			</div>
+			<div id="status" class="status">Waiting for broadcast...</div>
 		</div>
 
 		<script>
-			// Get DOM elements
 			const video = document.getElementById("video");
-			const startButton = document.getElementById("startButton");
-			const stopButton = document.getElementById("stopButton");
 			const statusElement = document.getElementById("status");
-
-			// Global variables
 			let pc = null;
 			let ws = null;
-			let stream = null;
 
-			// Helper function to update status
+			const config = {
+				iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+			};
+
 			function updateStatus(message, color = "black") {
 				console.log("Status:", message);
 				statusElement.textContent = message;
 				statusElement.style.color = color;
 			}
 
-			// WebRTC configuration
-			const config = {
-				iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-			};
-
-			async function startBroadcast() {
+			async function checkBroadcastStatus() {
 				try {
-					// First get user media
-					stream = await navigator.mediaDevices.getUserMedia({
-						video: true,
-						audio: true,
-					});
+					const response = await fetch("/broadcast-status");
+					const data = await response.json();
 
-					// Show stream in video element
-					video.srcObject = stream;
+					if (data.broadcasting && !pc) {
+						console.log("Broadcast detected, connecting...");
+						updateStatus("Connecting to broadcast...", "#FFA500");
+						await connectToStream();
+					} else if (!data.broadcasting && pc) {
+						console.log("Broadcast ended");
+						cleanup();
+						updateStatus("Waiting for broadcast...", "#999");
+					}
+				} catch (err) {
+					console.error("Error checking broadcast status:", err);
+				}
+			}
 
-					// Create peer connection
+			function cleanup() {
+				if (pc) {
+					pc.close();
+					pc = null;
+				}
+				if (ws) {
+					ws.close();
+					ws = null;
+				}
+				video.srcObject = null;
+			}
+
+			async function connectToStream() {
+				try {
+					cleanup();
+
 					pc = new RTCPeerConnection(config);
+					console.log("Created peer connection");
 
-					// Add tracks to peer connection
-					stream.getTracks().forEach((track) => {
-						pc.addTrack(track, stream);
-					});
+					// Handle incoming tracks
+					pc.ontrack = (event) => {
+						console.log("Received track:", event.track.kind);
+						video.srcObject = event.streams[0];
+					};
 
-					// Create offer
-					const offer = await pc.createOffer();
-					await pc.setLocalDescription(offer);
+					pc.oniceconnectionstatechange = () => {
+						console.log("ICE Connection State:", pc.iceConnectionState);
+						if (pc.iceConnectionState === "connected") {
+							updateStatus("Connected to broadcast", "#4CAF50");
+						} else if (pc.iceConnectionState === "disconnected") {
+							updateStatus("Disconnected from broadcast", "#FFA500");
+						}
+					};
 
-					// Create WebSocket connection
-					ws = new WebSocket("ws://147.182.138.79:8080/broadcast");
+					ws = new WebSocket("ws://147.182.138.79:8080/view");
 
-					ws.onopen = () => {
+					ws.onopen = async () => {
 						console.log("WebSocket connected");
-						updateStatus("Connected");
+						const offer = await pc.createOffer({
+							offerToReceiveVideo: true,
+							offerToReceiveAudio: true,
+						});
+						await pc.setLocalDescription(offer);
 
-						// Send offer once connected
 						ws.send(
 							JSON.stringify({
 								type: "offer",
-								sdp: offer.sdp,
-								streamKey: "your-stream-key",
+								data: offer.sdp,
 							})
 						);
 					};
 
 					ws.onclose = () => {
 						console.log("WebSocket closed");
-						updateStatus("Disconnected", "red");
+						cleanup();
+						updateStatus("Connection lost, waiting for broadcast...", "#999");
 					};
 
 					ws.onerror = (error) => {
-						console.error("WebSocket error:", error);
-						updateStatus("Connection failed", "red");
+						console.error("WebSocket Error:", error);
+						updateStatus("Connection error", "#F44336");
 					};
 
 					ws.onmessage = async (e) => {
@@ -111,47 +133,30 @@
 								await pc.setRemoteDescription(
 									new RTCSessionDescription({
 										type: "answer",
-										sdp: msg.sdp,
+										sdp: msg.data,
 									})
 								);
-								updateStatus("Broadcasting", "green");
+								updateStatus("Connected to broadcast", "#4CAF50");
 							}
-						} catch (error) {
-							console.error("Error handling message:", error);
-							updateStatus("Error: " + error.message, "red");
+						} catch (err) {
+							console.error("Error handling message:", err);
 						}
 					};
-
-					// Update UI
-					startButton.disabled = true;
-					stopButton.disabled = false;
-				} catch (error) {
-					console.error("Error:", error);
-					updateStatus("Error: " + error.message, "red");
-					stop();
+				} catch (err) {
+					console.error("Error connecting to stream:", err);
+					updateStatus("Error: " + err.message, "#F44336");
+					cleanup();
 				}
 			}
 
-			function stop() {
-				if (stream) {
-					stream.getTracks().forEach((track) => track.stop());
-				}
-				if (pc) {
-					pc.close();
-				}
-				if (ws) {
-					ws.close();
-				}
+			// Start checking for broadcast immediately
+			checkBroadcastStatus();
 
-				video.srcObject = null;
-				startButton.disabled = false;
-				stopButton.disabled = true;
-				updateStatus("Disconnected");
-			}
+			// Check for broadcast status every 2 seconds
+			setInterval(checkBroadcastStatus, 2000);
 
-			// Event listeners
-			startButton.addEventListener("click", startBroadcast);
-			stopButton.addEventListener("click", stop);
+			// Cleanup on page unload
+			window.onbeforeunload = cleanup;
 		</script>
 	</body>
 </html>
