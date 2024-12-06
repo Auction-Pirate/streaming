@@ -46,11 +46,11 @@ func main() {
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
 	// WebSocket endpoints
-	http.HandleFunc("/ws/broadcast", handleBroadcaster)
-	http.HandleFunc("/ws/view", handleViewer)
+	http.HandleFunc("/ws/broadcast", HandleBroadcaster)
+	http.HandleFunc("/ws/view", HandleViewer)
 	
 	// Web routes
-	http.HandleFunc("/", handleWeb)
+	http.HandleFunc("/", HandleWeb)
 
 	port := os.Getenv("PORT")
 	if port == "" {

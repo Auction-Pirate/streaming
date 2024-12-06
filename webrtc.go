@@ -10,7 +10,7 @@ import (
     "github.com/pion/webrtc/v3"
 )
 
-func handleWeb(w http.ResponseWriter, r *http.Request) {
+func HandleWeb(w http.ResponseWriter, r *http.Request) {
     view := r.URL.Query().Get("view")
     
     // Serve the static index.html file with different configurations based on view
@@ -22,7 +22,7 @@ func handleWeb(w http.ResponseWriter, r *http.Request) {
     }
 }
 
-func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
+func HandleBroadcaster(w http.ResponseWriter, r *http.Request) {
     // Upgrade HTTP connection to WebSocket
     conn, err := upgrader.Upgrade(w, r, nil)
     if err != nil {
@@ -141,7 +141,7 @@ func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
     broadcaster = nil
 }
 
-func handleViewer(w http.ResponseWriter, r *http.Request) {
+func HandleViewer(w http.ResponseWriter, r *http.Request) {
     conn, err := upgrader.Upgrade(w, r, nil)
     if err != nil {
         log.Printf("Upgrade error: %v", err)
