@@ -163,7 +163,7 @@
 			async function startViewing() {
 			    try {
 			        pc = new RTCPeerConnection(config);
-			        ws = new WebSocket('ws://{{.ServerWSURL}}/view');
+			        ws = new WebSocket('ws://147.182.138.79:8080/view');
 
 			        pc.ontrack = (event) => {
 			            if (videoElement.srcObject !== event.streams[0]) {

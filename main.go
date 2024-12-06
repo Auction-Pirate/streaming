@@ -301,5 +301,5 @@ func getServerURL() string {
 	if port == "" {
 		port = "8080"
 	}
-	return "ws://" + os.Getenv("SERVER_HOST") + ":" + port
+	return os.Getenv("SERVER_HOST") + ":" + port
 } 
