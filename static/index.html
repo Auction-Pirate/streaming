@@ -38,63 +38,76 @@
 			let ws;
 			let stream;
 
-			async function start() {
+			async function startBroadcast() {
 				try {
-					// Get user media
-					stream = await navigator.mediaDevices.getUserMedia({
-						video: true,
-						audio: true,
-					});
+					// Log the start of the process
+					console.log("Starting broadcast...");
 
-					// Show stream in video element
-					video.srcObject = stream;
-
-					// Create peer connection
-					pc = new RTCPeerConnection({
-						iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-					});
-
-					// Add tracks
-					stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
-					// Create and send offer
-					const offer = await pc.createOffer();
-					await pc.setLocalDescription(offer);
-
-					// Connect to WebSocket
-					ws = new WebSocket(
-						`ws://${window.location.hostname}:${window.location.port}/broadcast`
-					);
-
-					ws.onopen = () => {
-						console.log("WebSocket connected");
-						ws.send(
-							JSON.stringify({
-								type: "offer",
-								sdp: offer.sdp,
-								streamKey: "your-stream-key",
-							})
-						);
-					};
-
-					ws.onmessage = async (e) => {
-						const msg = JSON.parse(e.data);
-						if (msg.type === "answer") {
-							await pc.setRemoteDescription({
-								type: "answer",
-								sdp: msg.sdp,
-							});
-						}
-					};
+					// Create WebSocket first to test connection
+					ws = new WebSocket("ws://147.182.138.79:8080/broadcast");
 
 					ws.onerror = (error) => {
-						console.error("WebSocket error:", error);
+						console.error("WebSocket connection failed:", error);
+						updateStatus("WebSocket connection failed", "#f44336");
 					};
 
-					startButton.disabled = true;
-					stopButton.disabled = false;
-				} catch (e) {
-					console.error(e);
+					ws.onopen = async () => {
+						console.log("WebSocket connected successfully");
+
+						try {
+							// Get user media
+							stream = await navigator.mediaDevices.getUserMedia({
+								video: true,
+								audio: true,
+							});
+							console.log("Got media stream:", stream);
+
+							// Create peer connection
+							pc = new RTCPeerConnection({
+								iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+							});
+							console.log("Created peer connection");
+
+							// Add tracks
+							stream.getTracks().forEach((track) => {
+								console.log("Adding track:", track.kind);
+								pc.addTrack(track, stream);
+							});
+
+							// Create offer
+							const offer = await pc.createOffer();
+							console.log("Created offer");
+							await pc.setLocalDescription(offer);
+							console.log("Set local description");
+
+							// Send offer
+							ws.send(
+								JSON.stringify({
+									type: "offer",
+									sdp: offer.sdp,
+									streamKey: "your-stream-key",
+								})
+							);
+							console.log("Sent offer");
+
+							// Show stream in video element
+							const videoElement = document.getElementById("video");
+							videoElement.srcObject = stream;
+							await videoElement.play();
+							console.log("Playing local video");
+
+							startButton.disabled = true;
+							stopButton.disabled = false;
+							updateStatus("Broadcasting", "#4CAF50");
+						} catch (error) {
+							console.error("Error in broadcast setup:", error);
+							updateStatus("Error: " + error.message, "#f44336");
+							stopBroadcast();
+						}
+					};
+				} catch (error) {
+					console.error("Error starting broadcast:", error);
+					updateStatus("Error: " + error.message, "#f44336");
 				}
 			}
 
@@ -113,8 +126,29 @@
 				stopButton.disabled = true;
 			}
 
-			startButton.onclick = start;
+			startButton.onclick = startBroadcast;
 			stopButton.onclick = stop;
+
+			// Add this before any WebSocket connection attempt
+			async function testWebSocket() {
+				try {
+					const ws = new WebSocket("ws://147.182.138.79:8080/broadcast");
+
+					ws.onopen = () => {
+						console.log("WebSocket connection successful");
+						ws.close();
+					};
+
+					ws.onerror = (error) => {
+						console.error("WebSocket connection failed:", error);
+					};
+				} catch (error) {
+					console.error("WebSocket test failed:", error);
+				}
+			}
+
+			// Call this when the page loads
+			testWebSocket();
 		</script>
 	</body>
 </html>

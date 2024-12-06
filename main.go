@@ -70,8 +70,15 @@ func main() {
 	mux.Handle("/static/", http.StripPrefix("/static/", fs))
 
 	// WebSocket endpoints
-	mux.HandleFunc("/broadcast", handleBroadcaster)
-	mux.HandleFunc("/view", handleViewer)
+	mux.HandleFunc("/broadcast", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Received broadcast connection request from %s", r.RemoteAddr)
+		handleBroadcaster(w, r)
+	})
+
+	mux.HandleFunc("/view", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Received view connection request from %s", r.RemoteAddr)
+		handleViewer(w, r)
+	})
 
 	// Web routes
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -87,16 +94,18 @@ func main() {
 		port = "8080"
 	}
 
-	// Start server
-	log.Printf("Server starting on :%s", port)
-	log.Printf("Access broadcaster at: http://%s:%s/?view=broadcaster", os.Getenv("SERVER_HOST"), port)
-	log.Printf("Access viewer at: http://%s:%s/?view=viewer", os.Getenv("SERVER_HOST"), port)
-	
+	// Add debug logging
+	log.Printf("Starting server with configuration:")
+	log.Printf("Port: %s", port)
+	log.Printf("Host: %s", os.Getenv("SERVER_HOST"))
+	log.Printf("STUN Server: %s", os.Getenv("STUN_SERVER"))
+
 	server := &http.Server{
-		Addr:    ":" + port,
+		Addr:    "0.0.0.0:" + port,
 		Handler: handler,
 	}
 
+	log.Printf("Server listening on port %s", port)
 	log.Fatal(server.ListenAndServe())
 }
 
