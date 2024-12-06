@@ -152,39 +152,77 @@
 						console.log("Track state:", event.track.readyState);
 
 						if (event.track.kind === "audio") {
+							// Create a new audio context
+							if (!audioContext) {
+								audioContext = new (window.AudioContext ||
+									window.webkitAudioContext)();
+							}
+
+							// Create a new media stream with the received track
 							const audioStream = new MediaStream([event.track]);
+
+							// Connect to audio element
 							audio.srcObject = audioStream;
 
-							// Add track ended handler
+							// Create source from stream
+							const source = audioContext.createMediaStreamSource(audioStream);
+
+							// Create analyzer for volume meter
+							audioAnalyser = audioContext.createAnalyser();
+							audioAnalyser.fftSize = 256;
+
+							// Connect source to analyzer
+							source.connect(audioAnalyser);
+
+							// Connect source directly to audio context destination
+							source.connect(audioContext.destination);
+
+							// Setup volume meter
+							dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+							animateVolumeMeter();
+
+							// Add track event handlers
 							event.track.onended = () => {
 								console.log("Audio track ended");
+								cleanup();
 							};
 
-							// Add track mute handler
 							event.track.onmute = () => {
 								console.log("Audio track muted");
 							};
 
-							// Add track unmute handler
 							event.track.onunmute = () => {
 								console.log("Audio track unmuted");
 							};
 
-							setupAudioAnalyser(audioStream);
-
-							audio
-								.play()
-								.then(() => {
-									console.log("Audio playing successfully");
-									console.log("Audio element state:", {
-										readyState: audio.readyState,
-										paused: audio.paused,
-										muted: audio.muted,
-										volume: audio.volume,
+							// Try to play audio
+							const playPromise = audio.play();
+							if (playPromise !== undefined) {
+								playPromise
+									.then(() => {
+										console.log("Audio playing successfully");
+										console.log("Audio element state:", {
+											readyState: audio.readyState,
+											paused: audio.paused,
+											muted: audio.muted,
+											volume: audio.volume,
+											currentTime: audio.currentTime,
+											duration: audio.duration,
+										});
+										// Resume audio context if it's suspended
+										if (audioContext.state === "suspended") {
+											audioContext.resume();
+										}
+										updatePlaybackState();
+									})
+									.catch((err) => {
+										console.error("Error playing audio:", err);
+										// Try to handle autoplay restrictions
+										if (err.name === "NotAllowedError") {
+											updateStatus("Click Play to start audio", "orange");
+										}
 									});
-									updatePlaybackState();
-								})
-								.catch((err) => console.error("Error playing audio:", err));
+							}
 
 							updateStatus("Receiving audio", "#4CAF50");
 						}
@@ -278,14 +316,19 @@
 					ws = null;
 				}
 				if (audioContext) {
-					audioContext.close();
+					audioContext.close().catch(console.error);
 					audioContext = null;
 				}
 				if (animationFrame) {
 					cancelAnimationFrame(animationFrame);
 					animationFrame = null;
 				}
-				audio.srcObject = null;
+				if (audio) {
+					audio.srcObject = null;
+					audio.pause();
+				}
+				audioAnalyser = null;
+				dataArray = null;
 				audioIndicator.classList.remove("active");
 				volumeLevel.style.width = "0%";
 				updatePlaybackState();
@@ -330,25 +373,6 @@
 				stopButton.disabled = audio.paused;
 			}
 
-			function setupAudioAnalyser(stream) {
-				if (!audioContext) {
-					audioContext = new (window.AudioContext ||
-						window.webkitAudioContext)();
-				}
-
-				// Create audio source from stream
-				const source = audioContext.createMediaStreamSource(stream);
-				audioAnalyser = audioContext.createAnalyser();
-				audioAnalyser.fftSize = 256;
-				source.connect(audioAnalyser);
-
-				// Create data array for volume levels
-				dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
-
-				// Start animation
-				animateVolumeMeter();
-			}
-
 			function animateVolumeMeter() {
 				if (!audioAnalyser || !dataArray) return;
 
@@ -391,6 +415,13 @@
 			audio.onerror = (e) => {
 				console.error("Audio error:", audio.error);
 			};
+
+			// Add this function to handle autoplay restrictions
+			document.addEventListener("click", () => {
+				if (audioContext && audioContext.state === "suspended") {
+					audioContext.resume();
+				}
+			});
 		</script>
 	</body>
 </html>
