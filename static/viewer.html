@@ -132,88 +132,49 @@
 					pc.ontrack = (event) => {
 						console.log("Received track:", event.track.kind);
 						if (event.track.kind === "audio") {
-							const audioStream = new MediaStream([event.track]);
+							// Create audio element dynamically
+							const audio = document.createElement("audio");
+							audio.autoplay = true;
+							document.body.appendChild(audio);
 
-							// Create audio context
+							// Create MediaStream and connect it
+							const stream = new MediaStream([event.track]);
+							audio.srcObject = stream;
+
+							// Create audio context for volume meter
 							const audioContext = new (window.AudioContext ||
 								window.webkitAudioContext)();
-
-							// Create source from stream
-							const source = audioContext.createMediaStreamSource(audioStream);
-
-							// Create analyzer for volume meter
+							const source = audioContext.createMediaStreamSource(stream);
 							const analyser = audioContext.createAnalyser();
 							analyser.fftSize = 256;
-							const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-							// Connect source to analyzer and then to destination
+							// Connect to both analyzer and destination
 							source.connect(analyser);
 							source.connect(audioContext.destination);
 
 							// Update volume meter
-							function updateVolumeMeter() {
+							const dataArray = new Uint8Array(analyser.frequencyBinCount);
+							function updateMeter() {
 								analyser.getByteFrequencyData(dataArray);
 								const average =
 									dataArray.reduce((a, b) => a + b) / dataArray.length;
 								const volume = Math.min(100, Math.round((average / 255) * 100));
-
 								volumeLevel.style.width = volume + "%";
-								volumeLevel.style.backgroundColor =
-									volume > 50 ? "#ff4444" : "#4caf50";
-
-								requestAnimationFrame(updateVolumeMeter);
+								requestAnimationFrame(updateMeter);
 							}
+							updateMeter();
 
-							updateVolumeMeter();
-
-							// Add track event handlers
-							event.track.onended = () => {
-								console.log("Audio track ended");
-								audioContext.close();
-							};
-
-							event.track.onmute = () => {
-								console.log("Audio track muted");
-							};
-
-							event.track.onunmute = () => {
-								console.log("Audio track unmuted");
-							};
-
-							// Update button handlers
-							playButton.onclick = () => {
-								audioContext.resume();
-								updateStatus("Playing audio", "#4CAF50");
-							};
-
-							stopButton.onclick = () => {
-								audioContext.suspend();
-								updateStatus("Paused", "#FFA500");
-							};
-
-							muteButton.onclick = () => {
-								if (source.gain) {
-									source.gain.value = source.gain.value === 0 ? 1 : 0;
-									muteButton.textContent =
-										source.gain.value === 0 ? "Unmute" : "Mute";
-								}
-							};
-
-							// Handle autoplay restrictions
-							const playPromise = audioContext.resume();
-							if (playPromise !== undefined) {
-								playPromise
-									.then(() => {
-										console.log("Audio context resumed successfully");
-										updateStatus("Playing audio", "#4CAF50");
-									})
-									.catch((err) => {
-										console.error("Error resuming audio context:", err);
-										updateStatus("Click Play to start audio", "#FFA500");
-									});
-							}
-
-							updateStatus("Receiving audio", "#4CAF50");
+							// Log audio states
+							setInterval(() => {
+								console.log("Audio state:", {
+									readyState: audio.readyState,
+									paused: audio.paused,
+									currentTime: audio.currentTime,
+									trackState: event.track.readyState,
+									trackEnabled: event.track.enabled,
+									streamActive: stream.active,
+								});
+							}, 1000);
 						}
 					};
 

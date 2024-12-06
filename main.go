@@ -206,30 +206,34 @@ func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
 
 	// Handle incoming tracks
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		log.Printf("Got remote track: %v", remoteTrack.ID())
+		log.Printf("Got remote track: %v, kind: %v", remoteTrack.ID(), remoteTrack.Kind())
 		
 		// Create a local track to forward to viewers
-		localTrack, err := webrtc.NewTrackLocalStaticRTP(remoteTrack.Codec().RTPCodecCapability, remoteTrack.ID(), remoteTrack.StreamID())
+		localTrack, err := webrtc.NewTrackLocalStaticRTP(
+			remoteTrack.Codec().RTPCodecCapability,
+			"audio", // Fixed ID for audio track
+			"audio", // Fixed stream ID
+		)
 		if err != nil {
 			log.Printf("Failed to create local track: %v", err)
 			return
 		}
 		b.StreamTracks = append(b.StreamTracks, localTrack)
+		log.Printf("Created local track: %v", localTrack.ID())
 
 		// Forward RTP packets from broadcaster to all viewers
 		go func() {
 			for {
 				packet, _, err := remoteTrack.ReadRTP()
 				if err != nil {
+					log.Printf("Failed to read RTP packet: %v", err)
 					return
 				}
 
 				viewersMutex.RLock()
-				for _, viewer := range viewers {
-					for _, track := range viewer.StreamTracks {
-						if track.ID() == localTrack.ID() {
-							_ = track.WriteRTP(packet)
-						}
+				for id, viewer := range viewers {
+					if err := viewer.StreamTracks[0].WriteRTP(packet); err != nil {
+						log.Printf("Failed to write RTP to viewer %s: %v", id, err)
 					}
 				}
 				viewersMutex.RUnlock()
@@ -336,10 +340,13 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 
 	// Add broadcaster tracks to viewer if broadcaster exists
 	if broadcaster != nil {
+		log.Printf("Adding %d tracks from broadcaster", len(broadcaster.StreamTracks))
 		for _, track := range broadcaster.StreamTracks {
 			if _, err := pc.AddTrack(track); err != nil {
 				log.Printf("Add track error: %v", err)
+				continue
 			}
+			log.Printf("Added track: %v", track.ID())
 		}
 	}
 
@@ -361,29 +368,19 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 		case "offer":
 			log.Printf("Received offer from viewer")
 			
-			// Parse and set the remote description
+			// Set remote description first
 			offer := webrtc.SessionDescription{
 				Type: webrtc.SDPTypeOffer,
 				SDP:  message.SDP,
 			}
 
-			err = pc.SetRemoteDescription(offer)
-			if err != nil {
+			if err := pc.SetRemoteDescription(offer); err != nil {
 				log.Printf("Set remote desc error: %v", err)
 				continue
 			}
 			log.Printf("Set remote description successfully")
 
-			// Add broadcaster tracks to viewer if broadcaster exists
-			if broadcaster != nil {
-				for _, track := range broadcaster.StreamTracks {
-					if _, err := pc.AddTrack(track); err != nil {
-						log.Printf("Add track error: %v", err)
-					}
-				}
-			}
-
-			// Create answer without options
+			// Create answer
 			answer, err := pc.CreateAnswer(nil)
 			if err != nil {
 				log.Printf("Create answer error: %v", err)
@@ -392,8 +389,7 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Created answer")
 
 			// Set local description
-			err = pc.SetLocalDescription(answer)
-			if err != nil {
+			if err := pc.SetLocalDescription(answer); err != nil {
 				log.Printf("Set local desc error: %v", err)
 				continue
 			}
@@ -408,14 +404,6 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Write error: %v", err)
 			}
 			log.Printf("Sent answer to viewer")
-
-		case "candidate":
-			if broadcaster != nil {
-				// Forward ICE candidate to broadcaster
-				if err := broadcaster.WebSocket.WriteJSON(message); err != nil {
-					log.Printf("Error forwarding ICE candidate: %v", err)
-				}
-			}
 		}
 	}
 } 
