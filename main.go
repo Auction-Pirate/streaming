@@ -392,6 +392,13 @@ func handleViewer(w http.ResponseWriter, r *http.Request) {
 			if err := conn.WriteJSON(resp); err != nil {
 				log.Printf("Write error: %v", err)
 			}
+		case "candidate":
+			if broadcaster != nil {
+				// Forward the ICE candidate to the broadcaster
+				if err := broadcaster.WebSocket.WriteJSON(message); err != nil {
+					log.Printf("Error forwarding ICE candidate: %v", err)
+				}
+			}
 		}
 	}
 } 
