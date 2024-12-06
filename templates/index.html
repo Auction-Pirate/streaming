@@ -82,45 +82,54 @@
 			        // More detailed browser capability check
 			        if (!navigator.mediaDevices) {
 			            console.log('mediaDevices not found:', navigator.mediaDevices);
-			            throw new Error('Your browser does not support media devices. Please use a modern browser.');
+			            throw new Error('Your browser does not support media devices.');
 			        }
 
 			        if (!navigator.mediaDevices.getUserMedia) {
 			            console.log('getUserMedia not found');
-			            throw new Error('Your browser does not support getUserMedia. Please use a modern browser.');
+			            throw new Error('Your browser does not support getUserMedia.');
 			        }
 
 			        // Request access to media devices with constraints
 			        stream = await navigator.mediaDevices.getUserMedia({
 			            video: {
-			                width: { ideal: 1280 },
-			                height: { ideal: 720 },
-			                frameRate: { ideal: 30 }
+			                width: 1280,
+			                height: 720,
+			                frameRate: 30,
+			                facingMode: 'user'
 			            },
-			            audio: true
-			        }).catch(err => {
-			            console.log('getUserMedia error:', err);
-			            throw new Error('Failed to access camera/microphone: ' + err.message);
+			            audio: {
+			                echoCancellation: true,
+			                noiseSuppression: true,
+			                sampleRate: 44100
+			            }
 			        });
+
+			        console.log('Got media stream:', stream);
+			        console.log('Video tracks:', stream.getVideoTracks());
+			        console.log('Audio tracks:', stream.getAudioTracks());
 
 			        // Display the stream in the video element
 			        videoElement.srcObject = stream;
 			        videoElement.muted = true; // Mute local preview to prevent feedback
+			        videoElement.volume = 0;   // Ensure it's muted
+
+			        // Ensure video is playing
 			        try {
 			            await videoElement.play();
+			            console.log('Video playing successfully');
 			        } catch (err) {
 			            console.error('Error playing video:', err);
-			            // Try playing without autoplay
-			            videoElement.autoplay = true;
 			        }
 
 			        // Create WebRTC peer connection
 			        pc = new RTCPeerConnection(config);
-			        ws = new WebSocket('ws://147.182.138.79:8080/broadcast');
+			        console.log('Created peer connection:', pc);
 
 			        // Add tracks to the peer connection
 			        stream.getTracks().forEach(track => {
-			            pc.addTrack(track, stream);
+			            const sender = pc.addTrack(track, stream);
+			            console.log(`Added ${track.kind} track to peer connection:`, sender);
 			        });
 
 			        // Handle ICE candidate events
@@ -131,29 +140,53 @@
 			        };
 
 			        pc.oniceconnectionstatechange = () => {
+			            console.log('ICE Connection State:', pc.iceConnectionState);
 			            updateStatus(`ICE Connection: ${pc.iceConnectionState}`);
 			        };
 
-			        // Handle WebSocket connection
-			        ws.onopen = async () => {
-			            // Create and send offer
-			            const offer = await pc.createOffer();
-			            await pc.setLocalDescription(offer);
+			        pc.onconnectionstatechange = () => {
+			            console.log('Connection State:', pc.connectionState);
+			        };
 
-			            ws.send(JSON.stringify({
-			                type: 'offer',
-			                data: offer.sdp,
-			                streamKey: '{{.StreamKey}}'
-			            }));
+			        // Create WebSocket connection
+			        ws = new WebSocket('ws://147.182.138.79:8080/broadcast');
+
+			        ws.onopen = async () => {
+			            console.log('WebSocket connected, creating offer');
+			            try {
+			                const offer = await pc.createOffer({
+			                    offerToReceiveAudio: false,  // We're sending only
+			                    offerToReceiveVideo: false   // We're sending only
+			                });
+			                console.log('Created offer:', offer);
+
+			                await pc.setLocalDescription(offer);
+			                console.log('Set local description');
+
+			                ws.send(JSON.stringify({
+			                    type: 'offer',
+			                    data: offer.sdp,
+			                    streamKey: '{{.StreamKey}}'
+			                }));
+			                console.log('Sent offer to server');
+			            } catch (err) {
+			                console.error('Error during offer creation:', err);
+			            }
 			        };
 
 			        ws.onmessage = async (e) => {
-			            const msg = JSON.parse(e.data);
-			            if (msg.type === 'answer') {
-			                await pc.setRemoteDescription(new RTCSessionDescription({
-			                    type: 'answer',
-			                    sdp: msg.data
-			                }));
+			            try {
+			                const msg = JSON.parse(e.data);
+			                console.log('Received message:', msg);
+			                if (msg.type === 'answer') {
+			                    await pc.setRemoteDescription(new RTCSessionDescription({
+			                        type: 'answer',
+			                        sdp: msg.data
+			                    }));
+			                    console.log('Set remote description');
+			                }
+			            } catch (err) {
+			                console.error('Error handling message:', err);
 			            }
 			        };
 
@@ -168,19 +201,25 @@
 			    } catch (err) {
 			        console.error('Error:', err);
 			        updateStatus('Error: ' + err.message, '#f44336');
-			        stopBroadcast(); // Clean up any partial setup
+			        stopBroadcast();
 			    }
 			}
 
 			function stopBroadcast() {
+			    console.log('Stopping broadcast');
 			    if (stream) {
-			        stream.getTracks().forEach(track => track.stop());
+			        stream.getTracks().forEach(track => {
+			            track.stop();
+			            console.log(`Stopped ${track.kind} track`);
+			        });
 			    }
 			    if (pc) {
 			        pc.close();
+			        console.log('Closed peer connection');
 			    }
 			    if (ws) {
 			        ws.close();
+			        console.log('Closed WebSocket');
 			    }
 			    videoElement.srcObject = null;
 			    startButton.disabled = false;
