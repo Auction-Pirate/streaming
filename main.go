@@ -159,11 +159,9 @@ func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
 			})
 
 			// Set the remote description
-			offer := webrtc.SessionDescription{}
-			if err := json.Unmarshal([]byte(msg.Data), &offer); err != nil {
-				broadcasterLock.Unlock()
-				log.Printf("Failed to parse offer: %v", err)
-				return
+			offer := webrtc.SessionDescription{
+				Type: webrtc.SDPTypeOffer,
+				SDP:  msg.Data,
 			}
 
 			if err := broadcasterPC.SetRemoteDescription(offer); err != nil {
