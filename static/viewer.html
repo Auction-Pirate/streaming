@@ -147,9 +147,28 @@
 
 					pc.ontrack = (event) => {
 						console.log("Received track:", event.track.kind);
+						console.log("Track settings:", event.track.getSettings());
+						console.log("Track constraints:", event.track.getConstraints());
+						console.log("Track state:", event.track.readyState);
+
 						if (event.track.kind === "audio") {
 							const audioStream = new MediaStream([event.track]);
 							audio.srcObject = audioStream;
+
+							// Add track ended handler
+							event.track.onended = () => {
+								console.log("Audio track ended");
+							};
+
+							// Add track mute handler
+							event.track.onmute = () => {
+								console.log("Audio track muted");
+							};
+
+							// Add track unmute handler
+							event.track.onunmute = () => {
+								console.log("Audio track unmuted");
+							};
 
 							setupAudioAnalyser(audioStream);
 
@@ -157,9 +176,16 @@
 								.play()
 								.then(() => {
 									console.log("Audio playing successfully");
+									console.log("Audio element state:", {
+										readyState: audio.readyState,
+										paused: audio.paused,
+										muted: audio.muted,
+										volume: audio.volume,
+									});
 									updatePlaybackState();
 								})
 								.catch((err) => console.error("Error playing audio:", err));
+
 							updateStatus("Receiving audio", "#4CAF50");
 						}
 					};
@@ -344,6 +370,27 @@
 
 			// Cleanup on page unload
 			window.onbeforeunload = cleanup;
+
+			// Add these after the audio element is defined
+			audio.onloadedmetadata = () => {
+				console.log("Audio metadata loaded");
+			};
+
+			audio.oncanplay = () => {
+				console.log("Audio can play");
+			};
+
+			audio.onplay = () => {
+				console.log("Audio started playing");
+			};
+
+			audio.onpause = () => {
+				console.log("Audio paused");
+			};
+
+			audio.onerror = (e) => {
+				console.error("Audio error:", audio.error);
+			};
 		</script>
 	</body>
 </html>
