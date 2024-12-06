@@ -48,8 +48,8 @@
 					playsinline
 					autoplay
 					muted
-					{{if
-					.IsBroadcaster}}muted{{end}}
+					controls
+					style="width: 100%; height: 100%"
 				></video>
 			</div>
 
@@ -79,18 +79,34 @@
 
 			async function startBroadcast() {
 			    try {
-			        // More detailed browser capability check
-			        if (!navigator.mediaDevices) {
-			            console.log('mediaDevices not found:', navigator.mediaDevices);
-			            throw new Error('Your browser does not support media devices.');
-			        }
+			        // Create WebRTC peer connection first
+			        pc = new RTCPeerConnection(config);
+			        console.log('Created peer connection:', pc);
 
-			        if (!navigator.mediaDevices.getUserMedia) {
-			            console.log('getUserMedia not found');
-			            throw new Error('Your browser does not support getUserMedia.');
-			        }
+			        // Set up track event handlers before getting media
+			        pc.ontrack = (event) => {
+			            console.log('Received track:', event.track);
+			            if (videoElement.srcObject !== event.streams[0]) {
+			                videoElement.srcObject = event.streams[0];
+			            }
+			        };
 
-			        // Request access to media devices with constraints
+			        pc.onicecandidate = event => {
+			            if (event.candidate) {
+			                console.log("New ICE candidate:", event.candidate);
+			            }
+			        };
+
+			        pc.oniceconnectionstatechange = () => {
+			            console.log('ICE Connection State:', pc.iceConnectionState);
+			            updateStatus(`ICE Connection: ${pc.iceConnectionState}`);
+			        };
+
+			        pc.onconnectionstatechange = () => {
+			            console.log('Connection State:', pc.connectionState);
+			        };
+
+			        // Get media stream
 			        stream = await navigator.mediaDevices.getUserMedia({
 			            video: {
 			                width: 1280,
@@ -109,44 +125,22 @@
 			        console.log('Video tracks:', stream.getVideoTracks());
 			        console.log('Audio tracks:', stream.getAudioTracks());
 
-			        // Display the stream in the video element
+			        // Display stream in video element
 			        videoElement.srcObject = stream;
-			        videoElement.muted = true; // Mute local preview to prevent feedback
-			        videoElement.volume = 0;   // Ensure it's muted
+			        videoElement.muted = true;
 
-			        // Ensure video is playing
 			        try {
 			            await videoElement.play();
-			            console.log('Video playing successfully');
+			            console.log('Local video playing');
 			        } catch (err) {
-			            console.error('Error playing video:', err);
+			            console.error('Error playing local video:', err);
 			        }
 
-			        // Create WebRTC peer connection
-			        pc = new RTCPeerConnection(config);
-			        console.log('Created peer connection:', pc);
-
-			        // Add tracks to the peer connection
+			        // Add tracks to peer connection
 			        stream.getTracks().forEach(track => {
-			            const sender = pc.addTrack(track, stream);
-			            console.log(`Added ${track.kind} track to peer connection:`, sender);
+			            console.log('Adding track to peer connection:', track);
+			            pc.addTrack(track, stream);
 			        });
-
-			        // Handle ICE candidate events
-			        pc.onicecandidate = event => {
-			            if (event.candidate) {
-			                console.log("New ICE candidate:", event.candidate);
-			            }
-			        };
-
-			        pc.oniceconnectionstatechange = () => {
-			            console.log('ICE Connection State:', pc.iceConnectionState);
-			            updateStatus(`ICE Connection: ${pc.iceConnectionState}`);
-			        };
-
-			        pc.onconnectionstatechange = () => {
-			            console.log('Connection State:', pc.connectionState);
-			        };
 
 			        // Create WebSocket connection
 			        ws = new WebSocket('ws://147.182.138.79:8080/broadcast');
@@ -155,8 +149,8 @@
 			            console.log('WebSocket connected, creating offer');
 			            try {
 			                const offer = await pc.createOffer({
-			                    offerToReceiveAudio: false,  // We're sending only
-			                    offerToReceiveVideo: false   // We're sending only
+			                    offerToReceiveAudio: true,
+			                    offerToReceiveVideo: true
 			                });
 			                console.log('Created offer:', offer);
 
@@ -179,20 +173,16 @@
 			                const msg = JSON.parse(e.data);
 			                console.log('Received message:', msg);
 			                if (msg.type === 'answer') {
-			                    await pc.setRemoteDescription(new RTCSessionDescription({
+			                    const answer = new RTCSessionDescription({
 			                        type: 'answer',
 			                        sdp: msg.data
-			                    }));
+			                    });
+			                    await pc.setRemoteDescription(answer);
 			                    console.log('Set remote description');
 			                }
 			            } catch (err) {
 			                console.error('Error handling message:', err);
 			            }
-			        };
-
-			        ws.onerror = (error) => {
-			            console.error('WebSocket Error:', error);
-			            updateStatus('Connection Error', '#f44336');
 			        };
 
 			        startButton.disabled = true;
