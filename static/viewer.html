@@ -134,56 +134,84 @@
 						if (event.track.kind === "audio") {
 							const audioStream = new MediaStream([event.track]);
 
-							// Create a blob URL from the stream
-							const mediaRecorder = new MediaRecorder(audioStream);
-							const chunks = [];
+							// Create audio context
+							const audioContext = new (window.AudioContext ||
+								window.webkitAudioContext)();
 
-							mediaRecorder.ondataavailable = (e) => {
-								chunks.push(e.data);
+							// Create source from stream
+							const source = audioContext.createMediaStreamSource(audioStream);
+
+							// Create analyzer for volume meter
+							const analyser = audioContext.createAnalyser();
+							analyser.fftSize = 256;
+							const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+							// Connect source to analyzer and then to destination
+							source.connect(analyser);
+							source.connect(audioContext.destination);
+
+							// Update volume meter
+							function updateVolumeMeter() {
+								analyser.getByteFrequencyData(dataArray);
+								const average =
+									dataArray.reduce((a, b) => a + b) / dataArray.length;
+								const volume = Math.min(100, Math.round((average / 255) * 100));
+
+								volumeLevel.style.width = volume + "%";
+								volumeLevel.style.backgroundColor =
+									volume > 50 ? "#ff4444" : "#4caf50";
+
+								requestAnimationFrame(updateVolumeMeter);
+							}
+
+							updateVolumeMeter();
+
+							// Add track event handlers
+							event.track.onended = () => {
+								console.log("Audio track ended");
+								audioContext.close();
 							};
 
-							mediaRecorder.onstop = () => {
-								const blob = new Blob(chunks, { type: "audio/webm" });
-								const url = URL.createObjectURL(blob);
+							event.track.onmute = () => {
+								console.log("Audio track muted");
+							};
 
-								// Create Howler sound
-								if (sound) {
-									sound.unload();
+							event.track.onunmute = () => {
+								console.log("Audio track unmuted");
+							};
+
+							// Update button handlers
+							playButton.onclick = () => {
+								audioContext.resume();
+								updateStatus("Playing audio", "#4CAF50");
+							};
+
+							stopButton.onclick = () => {
+								audioContext.suspend();
+								updateStatus("Paused", "#FFA500");
+							};
+
+							muteButton.onclick = () => {
+								if (source.gain) {
+									source.gain.value = source.gain.value === 0 ? 1 : 0;
+									muteButton.textContent =
+										source.gain.value === 0 ? "Unmute" : "Mute";
 								}
+							};
 
-								sound = new Howl({
-									src: [url],
-									format: ["webm"],
-									html5: true,
-									autoplay: true,
-									loop: false,
-									volume: 1.0,
-									onplay: () => {
-										console.log("Playing audio");
+							// Handle autoplay restrictions
+							const playPromise = audioContext.resume();
+							if (playPromise !== undefined) {
+								playPromise
+									.then(() => {
+										console.log("Audio context resumed successfully");
 										updateStatus("Playing audio", "#4CAF50");
-									},
-									onend: () => {
-										console.log("Audio ended");
-										mediaRecorder.start();
-									},
-									onloaderror: (id, err) => {
-										console.error("Load error:", err);
-									},
-									onplayerror: (id, err) => {
-										console.error("Play error:", err);
-									},
-								});
-							};
-
-							// Start recording
-							mediaRecorder.start();
-
-							// Stop and restart recording every 1 second to create continuous audio
-							setInterval(() => {
-								if (mediaRecorder.state === "recording") {
-									mediaRecorder.stop();
-								}
-							}, 1000);
+									})
+									.catch((err) => {
+										console.error("Error resuming audio context:", err);
+										updateStatus("Click Play to start audio", "#FFA500");
+									});
+							}
 
 							updateStatus("Receiving audio", "#4CAF50");
 						}
@@ -235,10 +263,6 @@
 			}
 
 			function cleanup() {
-				if (sound) {
-					sound.unload();
-					sound = null;
-				}
 				if (pc) {
 					pc.close();
 					pc = null;
