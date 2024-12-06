@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>WebRTC Streaming</title>
+		<style>
+			.container {
+				max-width: 800px;
+				margin: 0 auto;
+				padding: 20px;
+			}
+			video {
+				width: 100%;
+				background: #000;
+			}
+			.controls {
+				margin-top: 20px;
+			}
+			button {
+				padding: 10px 20px;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<video id="video" autoplay playsinline></video>
+			<div class="controls">
+				<button id="startButton">Start</button>
+				<button id="stopButton" disabled>Stop</button>
+			</div>
+		</div>
+
+		<script>
+			const video = document.getElementById("video");
+			const startButton = document.getElementById("startButton");
+			const stopButton = document.getElementById("stopButton");
+
+			let pc;
+			let ws;
+			let stream;
+
+			async function start() {
+				try {
+					// Get user media
+					stream = await navigator.mediaDevices.getUserMedia({
+						video: true,
+						audio: true,
+					});
+
+					// Show stream in video element
+					video.srcObject = stream;
+
+					// Create peer connection
+					pc = new RTCPeerConnection({
+						iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+					});
+
+					// Add tracks
+					stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+					// Create and send offer
+					const offer = await pc.createOffer();
+					await pc.setLocalDescription(offer);
+
+					// Connect to WebSocket
+					ws = new WebSocket("ws://localhost:8080/ws/broadcast");
+
+					ws.onopen = () => {
+						ws.send(
+							JSON.stringify({
+								type: "offer",
+								sdp: offer.sdp,
+								streamKey: "your-stream-key",
+							})
+						);
+					};
+
+					ws.onmessage = async (e) => {
+						const msg = JSON.parse(e.data);
+						if (msg.type === "answer") {
+							await pc.setRemoteDescription({
+								type: "answer",
+								sdp: msg.sdp,
+							});
+						}
+					};
+
+					startButton.disabled = true;
+					stopButton.disabled = false;
+				} catch (e) {
+					console.error(e);
+				}
+			}
+
+			function stop() {
+				if (stream) {
+					stream.getTracks().forEach((track) => track.stop());
+				}
+				if (pc) {
+					pc.close();
+				}
+				if (ws) {
+					ws.close();
+				}
+				video.srcObject = null;
+				startButton.disabled = false;
+				stopButton.disabled = true;
+			}
+
+			startButton.onclick = start;
+			stopButton.onclick = stop;
+		</script>
+	</body>
+</html>
