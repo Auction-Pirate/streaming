@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -122,8 +123,87 @@ func createPeerConnection() (*webrtc.PeerConnection, error) {
 
 // Add the handler functions here
 func handleBroadcaster(w http.ResponseWriter, r *http.Request) {
-	// Copy the HandleBroadcaster function content from webrtc.go
-	// ... (copy the entire function content)
+	log.Printf("Received broadcast connection request from %s", r.RemoteAddr)
+	
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("WebSocket upgrade error: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	log.Printf("WebSocket connection established with broadcaster")
+
+	pc, err := createPeerConnection()
+	if err != nil {
+		log.Printf("Failed to create peer connection: %v", err)
+		return
+	}
+	defer pc.Close()
+
+	// Create new broadcaster connection
+	b := &WebRTCConnection{
+		PeerConnection: pc,
+		WebSocket:      conn,
+	}
+
+	// Set broadcaster
+	broadcaster = b
+
+	// Handle incoming messages
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			log.Printf("WebSocket read error: %v", err)
+			break
+		}
+
+		var message Message
+		if err := json.Unmarshal(msg, &message); err != nil {
+			log.Printf("Failed to parse message: %v", err)
+			continue
+		}
+
+		log.Printf("Received message type: %s", message.Type)
+
+		switch message.Type {
+		case "offer":
+			// Handle the offer
+			err = pc.SetRemoteDescription(webrtc.SessionDescription{
+				Type: webrtc.SDPTypeOffer,
+				SDP:  message.SDP,
+			})
+			if err != nil {
+				log.Printf("Failed to set remote description: %v", err)
+				continue
+			}
+
+			// Create answer
+			answer, err := pc.CreateAnswer(nil)
+			if err != nil {
+				log.Printf("Failed to create answer: %v", err)
+				continue
+			}
+
+			// Set local description
+			err = pc.SetLocalDescription(answer)
+			if err != nil {
+				log.Printf("Failed to set local description: %v", err)
+				continue
+			}
+
+			// Send answer
+			if err := conn.WriteJSON(Message{
+				Type: "answer",
+				SDP:  answer.SDP,
+			}); err != nil {
+				log.Printf("Failed to send answer: %v", err)
+			}
+		}
+	}
+
+	log.Printf("Broadcaster disconnected")
+	broadcaster = nil
 }
 
 func handleViewer(w http.ResponseWriter, r *http.Request) {
